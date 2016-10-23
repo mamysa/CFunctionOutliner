@@ -6,7 +6,9 @@
 #include "llvm/ADT/DenseSet.h"
 #include <fstream>
 #include <vector>
+#include <deque>
 #include <string>
+
 
 
 using namespace llvm;
@@ -35,7 +37,7 @@ namespace {
 	}
 
 	//@return returns true if the current region is the one we are looking for.
-	bool isTargetRegion(Region *R, std::vector<std::string>& labels) {
+	static bool isTargetRegion(Region *R, std::vector<std::string>& labels) {
 		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
 			auto loc = std::find(labels.begin(), labels.end(), it->getName());
 			if (loc == labels.end()) { 
@@ -45,9 +47,46 @@ namespace {
 
 		return true;
 	}
-	
 
+	enum DFSDirection { SUCC, PRED };
+	static DenseSet<BasicBlock *> DFS(BasicBlock *BB, enum DFSDirection d) {
+		DenseSet<BasicBlock *> blocks; 
+		
+		std::deque<BasicBlock *> stack;
+		stack.push_back(BB);
+		
+		while (stack.size() != 0) { 
+			BasicBlock *current = stack.back();
+			stack.pop_back();
+			// pick the block and expand it. If it has been visited before, we do not expand it.		
+			if (blocks.find(current) != blocks.end()) {
+				continue; 
+			}
+			
+			blocks.insert(current);
 
+			switch (d) {
+			case SUCC: 
+				for (auto it = succ_begin(current); it != succ_end(current); ++it) {
+					stack.push_back(*it);
+				}
+				break;
+			case PRED:
+				for (auto it = pred_begin(current); it != pred_end(current); ++it) {
+					stack.push_back(*it);
+				}
+				break;
+			}
+		}
+		
+		return blocks;
+	}
+
+	static void removeOwnBlocks(DenseSet<BasicBlock *>& blocks, Region *R) {
+		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
+			blocks.erase(*it);		
+		}
+	}
 
 	struct FuncExtract : public RegionPass {
 		static char ID;
@@ -70,6 +109,19 @@ namespace {
 			}
 
 			errs() << "Found region!\n";
+
+			BasicBlock *b = R->getEntry();
+			DenseSet<BasicBlock *> predecessors = DFS(b, PRED); 
+			removeOwnBlocks(predecessors, R);
+		
+			errs() << "Predecessors with self blocks removed are: \n";
+			for (auto predit = predecessors.begin(); predit != predecessors.end(); ++predit) {
+				errs() << (*predit)->getName() << "\n";
+			}
+
+
+
+
 			return false;
 		}
 
