@@ -88,6 +88,38 @@ namespace {
 		}
 	}
 
+	static void analyzeOperands(Instruction *I, 
+								const DenseSet<BasicBlock *> predecessors,
+								const DenseSet<BasicBlock *> successors,
+								DenseSet<Value *>& inputargs, 
+								DenseSet<Value *>& outputargs) {
+		// if instruction has users in some successor -> output argument
+		for (auto opit = I->op_begin(); opit != I->op_end(); ++opit) {
+			Value *operand = (*opit);
+			if (auto instr = dyn_cast<Instruction>(operand)) {
+				//instr->dump();
+				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
+					User *user = (*userit);
+					if (auto userinstr = dyn_cast<Instruction>(user)) { 
+						BasicBlock *parentblock = userinstr->getParent();
+						// if user is in predecessors -> input argument
+						if (predecessors.find(parentblock) != predecessors.end()) {
+							inputargs.insert(instr);
+						}
+						if (successors.find(parentblock) != successors.end()) {
+							outputargs.insert(instr);
+						}
+
+					}
+				}
+			}
+			//if global 
+
+
+		}
+	}
+
+
 	struct FuncExtract : public RegionPass {
 		static char ID;
 		FuncExtract() : RegionPass(ID) {  }
@@ -113,14 +145,29 @@ namespace {
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFS(b, PRED); 
 			removeOwnBlocks(predecessors, R);
-		
-			errs() << "Predecessors with self blocks removed are: \n";
-			for (auto predit = predecessors.begin(); predit != predecessors.end(); ++predit) {
-				errs() << (*predit)->getName() << "\n";
+
+			DenseSet<BasicBlock *> successors = DFS(b, SUCC);
+			removeOwnBlocks(successors, R);
+
+
+			DenseSet<Value *> inputargs;
+			DenseSet<Value *> outputargs;
+
+			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
+			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
+				analyzeOperands(&*instrit, predecessors, successors, inputargs, outputargs);
+				
 			}
 
+			errs() << "in args: \n";
+			for (auto it = inputargs.begin(); it != inputargs.end(); ++it) {
+				(*it)->dump();
+			}
 
-
+			errs() << "out args: \n";
+			for (auto it = outputargs.begin(); it != outputargs.end(); ++it) {
+				(*it)->dump();
+			}
 
 			return false;
 		}
