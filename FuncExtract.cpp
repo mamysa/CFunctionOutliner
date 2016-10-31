@@ -1,6 +1,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/RegionPass.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/DenseSet.h"
@@ -48,6 +49,40 @@ namespace {
 		return true;
 	}
 
+	static DenseSet<Value *> DFSInstruction(Instruction *I) {
+		DenseSet<Value *> collected;
+		DenseSet<Instruction *> visited; 
+		std::deque<Instruction *> stack;
+		stack.push_back(I);
+
+		while (stack.size() != 0) {
+			Instruction *current = stack.back();
+			stack.pop_back();
+			
+			if (visited.find(current) != visited.end()) {
+				continue;
+			}
+
+			// terminate if current instruction is alloca 
+			if (auto alloca = dyn_cast<AllocaInst>(current)) {
+				collected.insert(alloca);
+			}
+
+			visited.insert(current);
+
+			for (auto it = current->op_begin(); it != current->op_end(); ++it) {
+				if (auto instr = dyn_cast<Instruction>(*it)) {
+					stack.push_back(instr);	
+				}
+			}
+
+		}
+
+		return collected;
+	}
+
+
+
 	enum DFSDirection { SUCC, PRED };
 	static DenseSet<BasicBlock *> DFS(BasicBlock *BB, enum DFSDirection d) {
 		DenseSet<BasicBlock *> blocks; 
@@ -56,8 +91,8 @@ namespace {
 		stack.push_back(BB);
 		
 		while (stack.size() != 0) { 
-			BasicBlock *current = stack.back();
-			stack.pop_back();
+			BasicBlock *current = stack.front();
+			stack.pop_front();
 			// pick the block and expand it. If it has been visited before, we do not expand it.		
 			if (blocks.find(current) != blocks.end()) {
 				continue; 
@@ -88,15 +123,119 @@ namespace {
 		}
 	}
 
+
+	// We don't necessarily have to return certain things.
+	// Primitive types (i32, i8, float, etc) must always be returned.
+	// Array types should not be returned, C treats them as pointers.
+	// Pointer type must only be returned if the actual pointer is modified, and not its contents.
+	// Struct types must be returned, since they can be passed by value 
+	static bool mustReturnLocal(AllocaInst *source, StoreInst *I) {
+		if (source->getAllocatedType()->isIntegerTy() 
+			|| source->getAllocatedType()->isFloatTy()   
+			|| source->getAllocatedType()->isDoubleTy()  
+			|| source->getAllocatedType()->isHalfTy()   
+			|| source->getAllocatedType()->isStructTy() ) {
+			return true;
+		}
+
+		if (source->getAllocatedType()->isPointerTy() && I->getOperand(1) == source) {
+			return true; 
+		}
+			
+		return false;
+	}
+
+
 	static void analyzeOperands(Instruction *I, 
 								const DenseSet<BasicBlock *> predecessors,
 								const DenseSet<BasicBlock *> successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs) {
-		// if instruction has users in some successor -> output argument
-		for (auto opit = I->op_begin(); opit != I->op_end(); ++opit) {
-			Value *operand = (*opit);
-			if (auto instr = dyn_cast<Instruction>(operand)) {
+		DenseSet<Value *>sources = DFSInstruction(I);	
+		for (auto it = sources.begin(); it != sources.end(); ++it) {
+			if (auto instr = dyn_cast<AllocaInst>(*it)) {
+				// first we check if source instruction is allocated outside the region,
+				// in one of the predecessor basic blocks. We do not care if the instruction 
+				// is actually used (stored into, etc), if we did that would cause problems 
+				// for stack-allocated arrays as those can be uninitialized.
+				if (predecessors.find(instr->getParent()) != predecessors.end()) {
+					inputargs.insert(instr);
+				} 
+				// if instruction is used by some instruction is successor basic block, we add 
+				// it to the output argument list only if I is store, i.e. we modify it. 
+				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
+					Instruction *userinstr = cast<Instruction>(*userit);	
+					BasicBlock *parentBB = userinstr->getParent(); 
+					if (isa<StoreInst>(I) && successors.find(parentBB) != successors.end()) {
+						if (mustReturnLocal(instr, cast<StoreInst>(I))) { 
+							outputargs.insert(instr); 
+						}
+					}
+				}
+			}
+
+
+
+			// globals?
+		}
+				
+
+
+#if 0
+		if (auto instr = dyn_cast<Instruction>(*it)) {
+			for (auto uit = instr->user_begin(); uit != instr->user_end(); ++uit) {
+				if (auto uinstr = dyn_cast<Instruction>(*uit)) {
+					//uinstr->dump();
+					BasicBlock *parentblock = uinstr->getParent();
+
+					instr->dump();
+					if (predecessors.find(parentblock) != predecessors.end()) {
+						inputargs.insert(instr);
+					}
+					if (isa<StoreInst>(I) && successors.find(parentblock) != successors.end()) {
+						if (auto alloca = dyn_cast<AllocaInst>(instr)) {
+								outputargs.insert(instr);
+
+							if (alloca->getAllocatedType()->isStructTy()) {
+								outputargs.insert(instr);
+							}
+
+							if (alloca->getAllocatedType()->isIntegerTy()) {
+								outputargs.insert(instr);
+							}
+
+							if (alloca->getAllocatedType()->isArrayTy()) {
+								errs() << "hello\n";
+								outputargs.insert(instr);
+							}
+
+
+						}
+					}
+				}
+			}
+		}
+	}
+
+#endif
+	}
+
+#if 0				
+	//FIXME stack allocated structs are not detected!
+	static void analyzeOperands(Instruction *I, 
+								const DenseSet<BasicBlock *> predecessors,
+								const DenseSet<BasicBlock *> successors,
+								DenseSet<Value *>& inputargs, 
+								DenseSet<Value *>& outputargs) {
+
+		if (!isa<StoreInst>(I) && !isa<LoadInst>(I)) { return; }
+		Value *V = DFSInstruction(I);
+		assert(V != nullptr);
+		V->dump();
+#endif
+
+#if 0
+			if (auto instr = dyn_cast<Instruction>(V)) {
 				//instr->dump();
 				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
 					User *user = (*userit);
@@ -106,18 +245,27 @@ namespace {
 						if (predecessors.find(parentblock) != predecessors.end()) {
 							inputargs.insert(instr);
 						}
+
+						// add variable to output args if I is STORE
+						//if (!isa<StoreInst>(I)) { continue; }
 						if (successors.find(parentblock) != successors.end()) {
 							outputargs.insert(instr);
 						}
-
 					}
 				}
 			}
-			//if global 
+#endif
 
-
-		}
+			// globals are added to input args right away.
+			// only returned if they are modified (i.e. used by store instruction)
+#if 0
+			if (auto global = dyn_cast<GlobalValue>(operand)) {
+				inputargs.insert(global);
+				if (!isa<StoreInst>(I)) { continue; }
+				outputargs.insert(global);
+			}
 	}
+#endif
 
 
 	struct FuncExtract : public RegionPass {
@@ -155,8 +303,9 @@ namespace {
 
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
-				analyzeOperands(&*instrit, predecessors, successors, inputargs, outputargs);
-				
+				Instruction *I = &*instrit;
+				if (!isa<StoreInst>(I) && !isa<LoadInst>(I)) { continue; }
+				analyzeOperands(I, predecessors, successors, inputargs, outputargs);
 			}
 
 			errs() << "in args: \n";
