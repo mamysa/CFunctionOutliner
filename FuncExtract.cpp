@@ -51,12 +51,12 @@ namespace {
 
 	static DenseSet<Value *> DFSInstruction(Instruction *I) {
 		DenseSet<Value *> collected;
-		DenseSet<Instruction *> visited; 
-		std::deque<Instruction *> stack;
+		DenseSet<Value *> visited; 
+		std::deque<Value *> stack;
 		stack.push_back(I);
 
 		while (stack.size() != 0) {
-			Instruction *current = stack.back();
+			Value *current = stack.back();
 			stack.pop_back();
 			
 			if (visited.find(current) != visited.end()) {
@@ -68,12 +68,31 @@ namespace {
 				collected.insert(alloca);
 			}
 
-			visited.insert(current);
+		if (auto global = dyn_cast<GlobalValue>(current)) {
+				collected.insert(global);
+			}
 
-			for (auto it = current->op_begin(); it != current->op_end(); ++it) {
-				if (auto instr = dyn_cast<Instruction>(*it)) {
-					stack.push_back(instr);	
+
+
+
+			visited.insert(current);
+			// FIXME more careful selection of operands for certain instructions 
+			if (auto a = dyn_cast<Instruction>(current)) {
+				if (auto b = dyn_cast<StoreInst>(a)) {
+					stack.push_back(b->getOperand(1));
 				}
+				else {
+
+					for (auto it = a->op_begin(); it != a->op_end(); ++it) {
+						if (auto instr = dyn_cast<Instruction>(*it)) {
+							stack.push_back(instr);	
+						}
+						if (auto global = dyn_cast<GlobalValue>(*it)) {
+							stack.push_back(global);	
+						}
+					}
+				}
+
 			}
 
 		}
@@ -130,11 +149,8 @@ namespace {
 	// Pointer type must only be returned if the actual pointer is modified, and not its contents.
 	// Struct types must be returned, since they can be passed by value 
 	static bool mustReturnLocal(AllocaInst *source, StoreInst *I) {
-		if (source->getAllocatedType()->isIntegerTy() 
-			|| source->getAllocatedType()->isFloatTy()   
-			|| source->getAllocatedType()->isDoubleTy()  
-			|| source->getAllocatedType()->isHalfTy()   
-			|| source->getAllocatedType()->isStructTy() ) {
+		const Type *t = source->getAllocatedType();
+		if (t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isHalfTy() || t->isStructTy()) {
 			return true;
 		}
 
@@ -145,10 +161,23 @@ namespace {
 		return false;
 	}
 
+	static bool mustReturnGlobal(GlobalValue *source, StoreInst *I) {
+		const Type *t = source->getValueType();
+		if (t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isStructTy()) {
+			return true;
+		}
+		
+		if (t->isPointerTy() && I->getOperand(1) == source) {
+			return true;
+		}
+
+		return false;
+	}
+
 
 	static void analyzeOperands(Instruction *I, 
-								const DenseSet<BasicBlock *> predecessors,
-								const DenseSet<BasicBlock *> successors,
+								const DenseSet<BasicBlock *>& predecessors,
+								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs) {
 		DenseSet<Value *>sources = DFSInstruction(I);	
@@ -168,15 +197,21 @@ namespace {
 					BasicBlock *parentBB = userinstr->getParent(); 
 					if (isa<StoreInst>(I) && successors.find(parentBB) != successors.end()) {
 						if (mustReturnLocal(instr, cast<StoreInst>(I))) { 
+							I->dump();
 							outputargs.insert(instr); 
 						}
 					}
 				}
 			}
-
-
-
-			// globals?
+			if (auto global = dyn_cast<GlobalValue>(*it)) {
+				// globals are added to input argument list inconditionally. 
+				// if current instruction is store, we also add it to return values applying
+				// the same typing rules listed above
+				inputargs.insert(global);
+				if (isa<StoreInst>(I) && mustReturnGlobal(global, cast<StoreInst>(I))) {
+					outputargs.insert(global);
+				}
+			}
 		}
 				
 
