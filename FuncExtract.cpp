@@ -5,6 +5,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
 #include <fstream>
 #include <vector>
 #include <deque>
@@ -21,6 +22,7 @@ static cl::opt<std::string> BBListFilename("bblist",
 namespace {
 
 	//@return - list of basic block labels
+#if 0
 	static std::vector<std::string> readBBListFile(const std::string& filename) {
 		std::vector<std::string> blocks;
 
@@ -36,17 +38,65 @@ namespace {
 		stream.close();
 		return blocks;
 	}
+#endif
 
-	//@return returns true if the current region is the one we are looking for.
-	static bool isTargetRegion(Region *R, std::vector<std::string>& labels) {
-		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
-			auto loc = std::find(labels.begin(), labels.end(), it->getName());
-			if (loc == labels.end()) { 
-				return false; 
+
+	static void readBBListFile(StringMap<DenseSet<StringRef>>& F, 
+										  const std::string filename) {
+		std::ifstream stream;
+		stream.open(filename);
+
+		std::string tempstr;
+		StringRef   current;
+
+		while (!stream.eof()) { 
+			std::getline(stream, tempstr);
+			if (tempstr.length() == 0) { continue; }
+
+			// for some reason i cannot store std::string inside llvm data structures (doesn't compile)
+			// so i have to create stringrefs....
+			// string does not have to be null-terminated for stringref to work
+			char *buf = new char[tempstr.length()];
+			std::memcpy(buf, tempstr.c_str(), tempstr.length()); 
+			StringRef str(buf, tempstr.length());
+			str = str.trim();
+
+			if (tempstr.find("!") == 0) {
+				str = str.ltrim("!");
+				std::pair<StringRef, DenseSet<StringRef>> kv(str, DenseSet<StringRef>());
+				F.insert(kv);
+				current = str;
+			} else {
+				auto it = F.find(current);
+				if (it == F.end()) { 
+					errs() << "Found basic block without parent\n"; 
+					continue; 
+				}
+				(*it).getValue().insert(str);
 			}
 		}
 
-		return true;
+		stream.close();
+	}
+
+	//@return returns true if the current region is the one we are looking for.
+	// we are expecting the first label to be the function name prefixed with ! symbol.
+	static bool isTargetRegion(const Region *R, const std::vector<std::string>& labels) {
+		Function *F = R->getEntry()->getParent();
+		// bail early if current function doesn't have a matching name
+		std::string fnname = labels.front();
+		if (fnname.find("!") == std::string::npos)  { return false; }
+		fnname.erase(0, 1);
+		if (F->getName() != fnname) { return false; }
+
+		int numblocks = 0;
+		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
+			auto loc = std::find(labels.begin(), labels.end(), it->getName());
+			if (loc == labels.end()) { return false; }
+			numblocks++;
+		}
+
+		return (numblocks == (int)labels.size() - 1);
 	}
 
 	static DenseSet<Value *> DFSInstruction(Instruction *I) {
@@ -71,9 +121,6 @@ namespace {
 		if (auto global = dyn_cast<GlobalValue>(current)) {
 				collected.insert(global);
 			}
-
-
-
 
 			visited.insert(current);
 			// FIXME more careful selection of operands for certain instructions 
@@ -197,7 +244,6 @@ namespace {
 					BasicBlock *parentBB = userinstr->getParent(); 
 					if (isa<StoreInst>(I) && successors.find(parentBB) != successors.end()) {
 						if (mustReturnLocal(instr, cast<StoreInst>(I))) { 
-							I->dump();
 							outputargs.insert(instr); 
 						}
 					}
@@ -306,7 +352,7 @@ namespace {
 	struct FuncExtract : public RegionPass {
 		static char ID;
 		FuncExtract() : RegionPass(ID) {  }
-		std::vector<std::string> regionLabels;
+		StringMap<DenseSet<StringRef>> funcs;
 
 
 // find successors / predecessors
@@ -358,11 +404,23 @@ namespace {
 
 
 		bool doInitialization(Region *R, RGPassManager &RGM) override {
-			regionLabels = readBBListFile(BBListFilename);
+			static bool read = false;
+			if (read != 0) { return false; }
+			read = 1;
+			readBBListFile(funcs, BBListFilename);
 			return false;	
 		}
 
 		bool doFinalization(void) override {
+			// TODO delete buffers used by StringRefs
+			for (auto it = funcs.begin(); it != funcs.end(); ++it) {
+				//delete[] (*it).first().data();	
+				DenseSet<StringRef>& set = it->getValue();
+				for (auto b = set.begin(); b != set.end(); ++b) {
+					//delete[] b->data();
+				}
+
+			}
 			return false;	
 		}
 
