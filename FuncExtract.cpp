@@ -81,23 +81,29 @@ namespace {
 
 	//@return returns true if the current region is the one we are looking for.
 	// we are expecting the first label to be the function name prefixed with ! symbol.
-	static bool isTargetRegion(const Region *R, const std::vector<std::string>& labels) {
+	static bool isTargetRegion(const Region *R, const StringMap<DenseSet<StringRef>>& regionlabels) {
 		Function *F = R->getEntry()->getParent();
-		// bail early if current function doesn't have a matching name
-		std::string fnname = labels.front();
-		if (fnname.find("!") == std::string::npos)  { return false; }
-		fnname.erase(0, 1);
-		if (F->getName() != fnname) { return false; }
+		auto fnit = regionlabels.find(F->getName());
+		if (fnit == regionlabels.end()) { return false; }
+		const DenseSet<StringRef>& blocks = fnit->getValue();
 
 		int numblocks = 0;
 		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
-			auto loc = std::find(labels.begin(), labels.end(), it->getName());
-			if (loc == labels.end()) { return false; }
+			if (blocks.find(it->getName()) == blocks.end()) { return false; }
 			numblocks++;
 		}
 
-		return (numblocks == (int)labels.size() - 1);
+		return (numblocks == (int)blocks.size());
 	}
+
+	// returns true if region's first basic block is also a first basic block of a function 
+	static bool includesEntryBasicBlock(const Region *R) {
+		Function *F = R->getEntry()->getParent();
+		const BasicBlock *a = &F->getEntryBlock();
+		const BasicBlock *b =  R->getEntry();
+		return (a == b);
+	}
+
 
 	static DenseSet<Value *> DFSInstruction(Instruction *I) {
 		DenseSet<Value *> collected;
@@ -221,6 +227,15 @@ namespace {
 		return false;
 	}
 
+	static void analyzeFunctionArguments(Region *R, 
+										 DenseSet<Value *>& inputargs,
+										 DenseSet<Value *>& outputargs) {
+		Function *F = R->getEntry()->getParent();
+		for (auto it = F->arg_begin(); it != F->arg_end(); ++it) {
+			inputargs.insert(&*it);
+		}
+	}
+
 
 	static void analyzeOperands(Instruction *I, 
 								const DenseSet<BasicBlock *>& predecessors,
@@ -259,94 +274,7 @@ namespace {
 				}
 			}
 		}
-				
-
-
-#if 0
-		if (auto instr = dyn_cast<Instruction>(*it)) {
-			for (auto uit = instr->user_begin(); uit != instr->user_end(); ++uit) {
-				if (auto uinstr = dyn_cast<Instruction>(*uit)) {
-					//uinstr->dump();
-					BasicBlock *parentblock = uinstr->getParent();
-
-					instr->dump();
-					if (predecessors.find(parentblock) != predecessors.end()) {
-						inputargs.insert(instr);
-					}
-					if (isa<StoreInst>(I) && successors.find(parentblock) != successors.end()) {
-						if (auto alloca = dyn_cast<AllocaInst>(instr)) {
-								outputargs.insert(instr);
-
-							if (alloca->getAllocatedType()->isStructTy()) {
-								outputargs.insert(instr);
-							}
-
-							if (alloca->getAllocatedType()->isIntegerTy()) {
-								outputargs.insert(instr);
-							}
-
-							if (alloca->getAllocatedType()->isArrayTy()) {
-								errs() << "hello\n";
-								outputargs.insert(instr);
-							}
-
-
-						}
-					}
-				}
-			}
-		}
 	}
-
-#endif
-	}
-
-#if 0				
-	//FIXME stack allocated structs are not detected!
-	static void analyzeOperands(Instruction *I, 
-								const DenseSet<BasicBlock *> predecessors,
-								const DenseSet<BasicBlock *> successors,
-								DenseSet<Value *>& inputargs, 
-								DenseSet<Value *>& outputargs) {
-
-		if (!isa<StoreInst>(I) && !isa<LoadInst>(I)) { return; }
-		Value *V = DFSInstruction(I);
-		assert(V != nullptr);
-		V->dump();
-#endif
-
-#if 0
-			if (auto instr = dyn_cast<Instruction>(V)) {
-				//instr->dump();
-				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
-					User *user = (*userit);
-					if (auto userinstr = dyn_cast<Instruction>(user)) { 
-						BasicBlock *parentblock = userinstr->getParent();
-						// if user is in predecessors -> input argument
-						if (predecessors.find(parentblock) != predecessors.end()) {
-							inputargs.insert(instr);
-						}
-
-						// add variable to output args if I is STORE
-						//if (!isa<StoreInst>(I)) { continue; }
-						if (successors.find(parentblock) != successors.end()) {
-							outputargs.insert(instr);
-						}
-					}
-				}
-			}
-#endif
-
-			// globals are added to input args right away.
-			// only returned if they are modified (i.e. used by store instruction)
-#if 0
-			if (auto global = dyn_cast<GlobalValue>(operand)) {
-				inputargs.insert(global);
-				if (!isa<StoreInst>(I)) { continue; }
-				outputargs.insert(global);
-			}
-	}
-#endif
 
 
 	struct FuncExtract : public RegionPass {
@@ -364,7 +292,7 @@ namespace {
 
 
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
-			if (!isTargetRegion(R, regionLabels)) { 
+			if (!isTargetRegion(R, funcs)) { 
 				errs() << "Not the region\n";
 				return false; 
 			}
@@ -389,6 +317,12 @@ namespace {
 				analyzeOperands(I, predecessors, successors, inputargs, outputargs);
 			}
 
+			if (includesEntryBasicBlock(R)) {
+				analyzeFunctionArguments(R, inputargs, outputargs);
+			}
+
+
+
 			errs() << "in args: \n";
 			for (auto it = inputargs.begin(); it != inputargs.end(); ++it) {
 				(*it)->dump();
@@ -404,14 +338,17 @@ namespace {
 
 
 		bool doInitialization(Region *R, RGPassManager &RGM) override {
+			//TODO we should probably initialize this in the constructor?
 			static bool read = false;
 			if (read != 0) { return false; }
+			errs() << "Initialzing\n";
 			read = 1;
 			readBBListFile(funcs, BBListFilename);
 			return false;	
 		}
 
 		bool doFinalization(void) override {
+			errs() << "Cleaning up!\n";
 			// TODO delete buffers used by StringRefs
 			for (auto it = funcs.begin(); it != funcs.end(); ++it) {
 				//delete[] (*it).first().data();	
@@ -422,6 +359,10 @@ namespace {
 
 			}
 			return false;	
+		}
+
+		~FuncExtract(void) {
+			errs() << "Hello I am your destructor!\n";
 		}
 
 	};
