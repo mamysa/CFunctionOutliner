@@ -26,12 +26,14 @@ static cl::opt<std::string> BBListFilename("bblist",
 	   		cl::value_desc("filename"), cl::Required  );
 
 namespace {
+	typedef std::pair<unsigned,unsigned> RegionLoc;
+	typedef DenseMap<Value *, DILocalVariable *> VariableDbgInfo;
 
 	static bool  				  isEarlyReturnBlock(const BasicBlock *);
 	static DenseSet<BasicBlock *> findEarlyReturnsInRegion(const Region *);
-	static std::pair<unsigned,unsigned> getRegionLoc(DenseSet<BasicBlock *>&);
+	static RegionLoc getRegionLoc(DenseSet<BasicBlock *>&);
 	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
-	static bool variableDeclaredInRegion(Value *, const std::pair<unsigned,unsigned>&, const DenseMap<Value *, DILocalVariable *>&);
+	static bool variableDeclaredInRegion(Value *, const RegionLoc&, const VariableDbgInfo&);
 										 
 
 	static std::pair<unsigned,unsigned> getRegionLoc(const Region *R) {
@@ -46,65 +48,11 @@ namespace {
 				max = std::max(max, x.getLine());
 			}
 		}
-		errs() << min << " " << max << "\n";
+
 		return std::pair<unsigned,unsigned>(min, max);
 	}
 
-	// Detects basic blocks that only serve as return, meaning instructions in it
-	// only do memory reads, bitcasting and returning.
-	static bool isEarlyReturnBlock(const BasicBlock *BB) {
-		if (!isa<ReturnInst>(BB->getTerminator())) { return false; }
-		for (auto it = BB->begin(); it != BB->end(); ++it) {
-			if ( !isa<BitCastInst>(*it) && 
-				 !isa<ReturnInst>(*it)  && 
-				 !isa<LoadInst>(*it)    && 
-				 !isa<GetElementPtrInst>(*it) ) { return false; }
-		}
-		return true;
-	}
-
-
-	// finds basic blocks in the region that can terminate early. We need this 
-	// to determine where the function returns and modify C-file accordingly 
-	// (i.e. when returned, we set RET_EARLY flag so that we can bail afterwards )
-	static DenseSet<BasicBlock *> findEarlyReturnsInRegion(const Region *R) {
-		DenseSet<BasicBlock *> out;
-		Function *F = R->getEntry()->getParent();
-		for (auto a = F->begin(); a != F->end(); ++a) {
-			BasicBlock *retb = (&*a);
-			if (!isEarlyReturnBlock(retb)) { continue; }
-			for (auto b = R->block_begin(); b != R->block_end(); ++b) 
-			for (auto c = succ_begin(*b)  ; c != succ_end(*b)  ; ++c) {
-				if (retb == *c) {
-					out.insert(*b); 
-				}
-			}
-		}
-
-		return out;
-	}
-
-
-	//@return - list of basic block labels
-#if 0
-	static std::vector<std::string> readBBListFile(const std::string& filename) {
-		std::vector<std::string> blocks;
-
-		std::ifstream stream;
-		stream.open(filename);
-
-		std::string temp;
-		while (!stream.eof()) {
-			std::getline(stream, temp);
-			if (temp.length() != 0) { blocks.push_back(temp); }
-		}
-
-		stream.close();
-		return blocks;
-	}
-#endif
-
-
+	
 	static void readBBListFile(StringMap<DenseSet<StringRef>>& F, 
 										  const std::string filename) {
 		std::ifstream stream;
@@ -262,38 +210,6 @@ namespace {
 		}
 	}
 
-
-	// We don't necessarily have to return certain things.
-	// Primitive types (i32, i8, float, etc) must always be returned.
-	// Array types should not be returned, C treats them as pointers.
-	// Pointer type must only be returned if the actual pointer is modified, and not its contents.
-	// Struct types must be returned, since they can be passed by value 
-	static bool mustReturnLocal(AllocaInst *source, StoreInst *I) {
-		const Type *t = source->getAllocatedType();
-		if (t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isHalfTy() || t->isStructTy()) {
-			return true;
-		}
-
-		if (source->getAllocatedType()->isPointerTy() && I->getOperand(1) == source) {
-			return true; 
-		}
-			
-		return false;
-	}
-
-	static bool mustReturnGlobal(GlobalValue *source, StoreInst *I) {
-		const Type *t = source->getValueType();
-		if (t->isIntegerTy() || t->isFloatTy() || t->isDoubleTy() || t->isStructTy()) {
-			return true;
-		}
-		
-		if (t->isPointerTy() && I->getOperand(1) == source) {
-			return true;
-		}
-
-		return false;
-	}
-
 	static void analyzeFunctionArguments(Region *R, 
 										 DenseSet<Value *>& inputargs) {
 		Function *F = R->getEntry()->getParent();
@@ -310,8 +226,13 @@ namespace {
 								DenseSet<Value *>& outputargs,
 								const std::pair<unsigned,unsigned>& regionBounds,
 								const DenseMap<Value *, DILocalVariable *>& debugInfo) {
-		DenseSet<Value *>sources = DFSInstruction(I);	
+		static DenseSet<Value *> analyzed; 
+		DenseSet<Value *> sources = DFSInstruction(I);	
 		for (auto it = sources.begin(); it != sources.end(); ++it) {
+			// we don't have to look at values we have seen before... 
+			if (analyzed.find(*it) != analyzed.end()) { continue; }
+			analyzed.insert(*it);
+
 			if (auto instr = dyn_cast<AllocaInst>(*it)) {
 				// first we check if source instruction is allocated outside the region,
 				// in one of the predecessor basic blocks. We do not care if the instruction 
@@ -376,7 +297,7 @@ namespace {
 										 const DenseMap<Value *, DILocalVariable *>& debugInfo) { 
 		auto iterator = debugInfo.find(V);
 		if (iterator == debugInfo.end()) {
-			errs() << "Could not locate variable info: \n";
+			errs() << "No debug info for variable: \n";
 			V->dump();
 			return false;
 
@@ -385,9 +306,95 @@ namespace {
 		unsigned line = DLV->getLine();
 		return (regionBounds.first <= line && line <= regionBounds.second);
 	}
+
+
+	static std::pair<DIType *, int>  getBaseType(DIType *T) {
+
+		// start looking for something more specific if  DerivedType is either a pointer 
+		// or CompositeType is an array. 
+		int ptrlevel = 0;
+		Metadata *md = T;	
+
+loop:
+		if (auto *a = dyn_cast<DIBasicType>(md)) { 
+			goto retlabel; 
+		}
+
+		if (auto *a = dyn_cast<DICompositeType>(md)) { 
+			switch (a->getTag()) {
+			case dwarf::DW_TAG_array_type:
+				md = a->getBaseType(); ptrlevel++;	
+				goto loop;
+			default:
+				goto retlabel;
+
+			}
+		}
+
+		if (auto *a = dyn_cast<DIDerivedType>(md)) {
+			switch (a->getTag()) {
+			case dwarf::DW_TAG_pointer_type:
+				md = a->getBaseType(); ptrlevel++;	
+				goto loop;
+			default:
+				goto retlabel;
+			}
+		}
+
+retlabel:
+		return std::pair<DIType *, int>(cast<DIType>(md), ptrlevel);
+	}
+
+
+	static void dumpValueInfo(Value *V, const VariableDbgInfo& VDI) {
+		auto iterator = VDI.find(V); 
+		if (iterator == VDI.end()) {
+			errs() << "TYPE: UNKNOWN\n";
+			V->dump();
+			return;
+			//TODO exit ?
+		}
+
+		DILocalVariable *LV =  iterator->getSecond();
+		DIType *T = dyn_cast<DIType>(iterator->getSecond()->getRawType());
+
+		V->dump();
+
+		if (!T) { 
+			errs() << "RawType() - unexpected metadata type\n"; 
+		}
+
+		auto TT = getBaseType(T);
+
+		if (auto *a = dyn_cast<DIBasicType>(TT.first)) {
+			errs() << "TYPE: " << a->getName() << " " << TT.second << "\n";
+			errs() << "NAME: " << LV->getName() << "\n";
+		}
+
+		if (auto *a = dyn_cast<DICompositeType>(TT.first)) {
+			if (a->getTag() == dwarf::DW_TAG_structure_type) { 
+				errs() << "TYPE: struct " << TT.second << " "  << a->getName() <<"\n"; 
+			}
+
+			if (a->getTag() == dwarf::DW_TAG_array_type) {
+				errs() << "TYPE " << a->getName() << " " << TT.second << "\n";
+				errs() << "NAME: " << LV->getName() << "\n";
+
+			}
+
+
+		}
+
+		if (auto *a = dyn_cast<DIDerivedType>(TT.first)) {
+			if (a->getTag() == dwarf::DW_TAG_typedef) { 
+				errs() << "TYPE: " << a->getName() << " " << TT.second << "\n"; 
+				errs() << "NAME: " << LV->getName() << "\n";
+			}
+
+		}
+	}
+
 										 
-
-
 	struct FuncExtract : public RegionPass {
 		static char ID;
 		FuncExtract() : RegionPass(ID) {  }
@@ -401,10 +408,8 @@ namespace {
 // if operand has users in  predecessors -> input arg
 // if operand has users in successors -> output arg
 
-
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
 			if (!isTargetRegion(R, funcs)) { 
-				errs() << "Not the region\n";
 				return false; 
 			}
 
@@ -432,6 +437,23 @@ namespace {
 				if (!isa<StoreInst>(I) && !isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
 				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, debugInfo );
 			}
+			
+
+
+
+			errs() << "\nin\n";
+			for (Value *V : inputargs) {
+				errs() << "-----\n";
+				dumpValueInfo(V, debugInfo);
+			}
+
+
+			errs() << "\nout\n";
+			for (Value *V : outputargs) {
+				errs() << "-----\n";
+				dumpValueInfo(V, debugInfo);
+			}
+
 
 #if 0
 			if (includesEntryBasicBlock(R)) {
@@ -538,6 +560,7 @@ namespace {
 
 #endif
 
+#if 0
 			errs() << "in args: \n";
 			for (auto it = inputargs.begin(); it != inputargs.end(); ++it) {
 				(*it)->dump();
@@ -547,6 +570,7 @@ namespace {
 			for (auto it = outputargs.begin(); it != outputargs.end(); ++it) {
 				(*it)->dump();
 			}
+#endif
 
 			return false;
 		}
@@ -556,14 +580,13 @@ namespace {
 			//TODO we should probably initialize this in the constructor?
 			static bool read = false;
 			if (read != 0) { return false; }
-			errs() << "Initialzing\n";
 			read = 1;
 			readBBListFile(funcs, BBListFilename);
 			return false;	
 		}
 
 		bool doFinalization(void) override {
-			errs() << "Cleaning up!\n";
+			//errs() << "Cleaning up!\n";
 			// TODO delete buffers used by StringRefs
 			for (auto it = funcs.begin(); it != funcs.end(); ++it) {
 				//delete[] (*it).first().data();	
