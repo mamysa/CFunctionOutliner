@@ -166,11 +166,20 @@ namespace {
 
 
 	
-	typedef void (EnqueueBlockFunc)(std::deque<BasicBlock *>, BasicBlock *);
+	//helper methods + DFS routine for finding all reachable blocks starting at some 
+	//basic block BB. 
+	typedef void (EnqueueBlockFunc)(std::deque<BasicBlock *>&, BasicBlock *);
 
-	enum DFSDirection { SUCC, PRED };
-	static DenseSet<BasicBlock *> DFS(BasicBlock *BB, enum DFSDirection d) {
-		DenseSet<BasicBlock *> blocks; 
+	static void pushSuccessors(std::deque<BasicBlock *>& stack, BasicBlock *BB) {
+		for (auto it = succ_begin(BB); it != succ_end(BB); ++it) { stack.push_back(*it); }
+	}
+
+	static void pushPredecessors(std::deque<BasicBlock *>& stack, BasicBlock *BB) {
+		for (auto it = pred_begin(BB); it != pred_end(BB); ++it) { stack.push_back(*it); }
+	}
+
+	static DenseSet<BasicBlock *> DFSBasicBlocks(BasicBlock *BB, EnqueueBlockFunc enqueueFunc) {
+		DenseSet<BasicBlock *> visited; 
 		
 		std::deque<BasicBlock *> stack;
 		stack.push_back(BB);
@@ -178,34 +187,19 @@ namespace {
 		while (stack.size() != 0) { 
 			BasicBlock *current = stack.front();
 			stack.pop_front();
-			// pick the block and expand it. If it has been visited before, we do not expand it.		
-			if (blocks.find(current) != blocks.end()) {
-				continue; 
-			}
-			
-			blocks.insert(current);
-
-			switch (d) {
-			case SUCC: 
-				for (auto it = succ_begin(current); it != succ_end(current); ++it) {
-					stack.push_back(*it);
-				}
-				break;
-			case PRED:
-				for (auto it = pred_begin(current); it != pred_end(current); ++it) {
-					stack.push_back(*it);
-				}
-				break;
-			}
+			// pick the block and expand it. If it has been visited before, we do not expand it
+			if (visited.find(current) != visited.end()) { continue; }
+			visited.insert(current);
+			enqueueFunc(stack, current);
 		}
 		
-		return blocks;
+		return visited;
 	}
 
+	// after DFSBasicBlocks routine we might end up having basic blocks belonging to a region 
+	// in the returned basic block set. We want to remove those. 
 	static void removeOwnBlocks(DenseSet<BasicBlock *>& blocks, Region *R) {
-		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
-			blocks.erase(*it);		
-		}
+		for (auto it = R->block_begin(); it != R->block_end(); ++it) { blocks.erase(*it); }
 	}
 
 	static void analyzeFunctionArguments(Region *R, 
@@ -412,22 +406,21 @@ retlabel:
 // for each operand in instruction 
 // if operand has users in  predecessors -> input arg
 // if operand has users in successors -> output arg
-
+		
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
-			if (!isTargetRegion(R, funcs)) { 
-				return false; 
-			}
+			if (!isTargetRegion(R, funcs)) { return false; }
 
 			errs() << "Found region!\n";
 
 			std::pair<unsigned,unsigned> regionBounds = getRegionLoc(R);
 
 			BasicBlock *b = R->getEntry();
-			DenseSet<BasicBlock *> predecessors = DFS(b, PRED); 
+			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
 			removeOwnBlocks(predecessors, R);
 
-			DenseSet<BasicBlock *> successors = DFS(b, SUCC);
+			DenseSet<BasicBlock *> successors = DFSBasicBlocks(b, pushSuccessors);
 			removeOwnBlocks(successors, R);
+
 
 			DenseSet<Value *> inputargs;
 			DenseSet<Value *> outputargs;
@@ -495,4 +488,4 @@ retlabel:
 }
 
 char FuncExtract::ID = 0;
-static RegisterPass<FuncExtract> X("funcextract", "Func Extract", false, false);
+static RegisterPass<FuncExtract> X("funcextract", "Func Extract", true, true);
