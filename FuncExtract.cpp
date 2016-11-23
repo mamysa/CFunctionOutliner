@@ -29,9 +29,7 @@ namespace {
 	typedef std::pair<unsigned,unsigned> RegionLoc;
 	typedef DenseMap<Value *, DILocalVariable *> VariableDbgInfo;
 
-	static bool  				  isEarlyReturnBlock(const BasicBlock *);
-	static DenseSet<BasicBlock *> findEarlyReturnsInRegion(const Region *);
-	static RegionLoc getRegionLoc(DenseSet<BasicBlock *>&);
+	static RegionLoc getRegionLoc(const Region *);
 	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
 	static bool variableDeclaredInRegion(Value *, const RegionLoc&, const VariableDbgInfo&);
 										 
@@ -309,89 +307,96 @@ namespace {
 
 
 	static std::pair<DIType *, int>  getBaseType(DIType *T) {
-
-		// start looking for something more specific if  DerivedType is either a pointer 
-		// or CompositeType is an array. 
-		int ptrlevel = 0;
+		int ptrcount = 0;
 		Metadata *md = T;	
 
-loop:
+restart:
 		if (auto *a = dyn_cast<DIBasicType>(md)) { 
 			goto retlabel; 
 		}
 
+		// have to look for more concrete type if we are dealing with arrays.
 		if (auto *a = dyn_cast<DICompositeType>(md)) { 
 			switch (a->getTag()) {
 			case dwarf::DW_TAG_array_type:
-				md = a->getBaseType(); ptrlevel++;	
-				goto loop;
+				md = a->getBaseType(); ptrcount++;	
+				goto restart;
 			default:
 				goto retlabel;
-
 			}
 		}
 
+		// have to look for more concrete type if we are dealing with pointers.
 		if (auto *a = dyn_cast<DIDerivedType>(md)) {
 			switch (a->getTag()) {
 			case dwarf::DW_TAG_pointer_type:
-				md = a->getBaseType(); ptrlevel++;	
-				goto loop;
+				md = a->getBaseType(); ptrcount++;	
+				goto restart;
 			default:
 				goto retlabel;
 			}
 		}
 
 retlabel:
-		return std::pair<DIType *, int>(cast<DIType>(md), ptrlevel);
+		return std::pair<DIType *, int>(cast<DIType>(md), ptrcount);
 	}
 
 
-	static void dumpValueInfo(Value *V, const VariableDbgInfo& VDI) {
+	static void writeValueInfo(Value *V, const VariableDbgInfo& VDI, bool isInputVar, std::ofstream& out) {
 		auto iterator = VDI.find(V); 
 		if (iterator == VDI.end()) {
-			errs() << "TYPE: UNKNOWN\n";
 			V->dump();
+			errs() << "Unknown variable, skipping...";
 			return;
-			//TODO exit ?
 		}
 
 		DILocalVariable *LV =  iterator->getSecond();
 		DIType *T = dyn_cast<DIType>(iterator->getSecond()->getRawType());
 
-		V->dump();
+
+		out << "Variable {\n"; 
+		if (isInputVar) { out << "bINPUT: true\n"; }
+		else { out << "bINPUT: false\n"; }
+
 
 		if (!T) { 
-			errs() << "RawType() - unexpected metadata type\n"; 
+			out << "TYPE: UNKNOWN\n";
 		}
 
 		auto TT = getBaseType(T);
+		out << "NAME: " << LV->getName().str() << "\n";
+		out << "PTRL: " << TT.second << "\n";
+
 
 		if (auto *a = dyn_cast<DIBasicType>(TT.first)) {
-			errs() << "TYPE: " << a->getName() << " " << TT.second << "\n";
-			errs() << "NAME: " << LV->getName() << "\n";
+			out << "TYPE: " << a->getName().str() <<"\n";
 		}
 
 		if (auto *a = dyn_cast<DICompositeType>(TT.first)) {
 			if (a->getTag() == dwarf::DW_TAG_structure_type) { 
-				errs() << "TYPE: struct " << TT.second << " "  << a->getName() <<"\n"; 
+				out << "TYPE: struct " << a->getName().str() <<"\n"; 
 			}
 
 			if (a->getTag() == dwarf::DW_TAG_array_type) {
-				errs() << "TYPE " << a->getName() << " " << TT.second << "\n";
-				errs() << "NAME: " << LV->getName() << "\n";
-
+				out << "TYPE: " << a->getName().str() <<  "\n";
 			}
-
-
 		}
 
 		if (auto *a = dyn_cast<DIDerivedType>(TT.first)) {
 			if (a->getTag() == dwarf::DW_TAG_typedef) { 
-				errs() << "TYPE: " << a->getName() << " " << TT.second << "\n"; 
-				errs() << "NAME: " << LV->getName() << "\n";
+				out << "TYPE: " << a->getName().str() <<  "\n"; 
 			}
-
 		}
+
+
+		out << "}\n";
+	}
+
+	static void writeRegionInfo(RegionLoc& loc, std::ofstream& out) {
+		out << "Region {\n";
+		out << "START: " << loc.first  << "\n"; 
+		out << "END: "   << loc.second << "\n"; 
+		out << "}\n";
 	}
 
 										 
@@ -437,22 +442,15 @@ retlabel:
 				if (!isa<StoreInst>(I) && !isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
 				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, debugInfo );
 			}
-			
 
-
-
-			errs() << "\nin\n";
-			for (Value *V : inputargs) {
-				errs() << "-----\n";
-				dumpValueInfo(V, debugInfo);
-			}
-
-
-			errs() << "\nout\n";
-			for (Value *V : outputargs) {
-				errs() << "-----\n";
-				dumpValueInfo(V, debugInfo);
-			}
+			std::ofstream outfile;
+			outfile.open("extractinfo.txt", std::ofstream::out);
+			// write region bounds...
+			writeRegionInfo(regionBounds, outfile);
+			// dump variable info...
+			for (Value *V : inputargs)  { writeValueInfo(V, debugInfo, true,  outfile); }
+			for (Value *V : outputargs) { writeValueInfo(V, debugInfo, false, outfile); }
+			outfile.close();
 
 
 #if 0
@@ -461,116 +459,6 @@ retlabel:
 			}
 #endif
 			
-
-
-#if 0
-			for (auto it = inputargs.begin(); it != inputargs.end(); ++it) {
-				auto *L = LocalAsMetadata::get(*it);
-				auto *MDV = MetadataAsValue::get((*it)->getContext(), L);
-				for (User *U : MDV->users()) {
-					DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(U);
-					// gives us <Value *, DbgDeclareInstr *> pair
-					if (DDI) {
-						DILocalVariable *localVar = DDI->getVariable();
-						(*it)->dump();
-						errs() << localVar->getName() << "\n";
-						errs() << localVar->getLine() << "\n";
-						Metadata *m = localVar->getType();
-						if (DIBasicType *DIBT = dyn_cast<DIBasicType>(m)) {
-							errs() << DIBT->getName() << "\n";
-						}
-						if (DICompositeType *DICT = dyn_cast<DICompositeType>(m)) {
-							if (DICT->getTag() == dwarf::DW_TAG_structure_type) {
-
-								errs() << "struct " << DICT->getName() << "\n";
-							}
-						}
-
-
-						if (DIDerivedType *DICT = dyn_cast<DIDerivedType>(m)) {
-							if (DICT->getTag() == dwarf::DW_TAG_pointer_type) {
-								errs() << "pointer " << DICT->getName() << "\n";
-
-								int ptrcount = 1;
-								//gotta reach the type that is not tagged as pointer...
-								Metadata *t = DICT->getRawBaseType();
-								while (true) {
-									if (auto *x = dyn_cast<DIDerivedType>(t)) {
-										t = x->getRawBaseType();
-										ptrcount++;
-										continue;
-									}
-
-									if (auto *x = dyn_cast<DICompositeType>(t)) {
-										errs() << x->getName() << " " << ptrcount << "\n";
-										break;
-									}
-
-									if (auto *x = dyn_cast<DIBasicType>(t)) {
-										errs() << x->getName() << " " << ptrcount << "\n";
-										break;
-									}
-								}
-
-
-
-
-								if (auto t2 = dyn_cast<DIDerivedType>(t)) {
-									t2->dump();
-								}
-
-
-
-
-								//(*it)->dump();
-							}
-						}
-
-					}
-				}
-
-
-				errs() << "--\n";
-			}
-#endif
-			
-
-
-#if 0
-			Function *F = R->getEntry()->getParent();
-			for (auto bit = F->begin(); bit != F->end(); ++bit) {
-				BasicBlock *bb = &*bit;
-				for (auto iit = bb->begin(); iit != bb->end(); ++iit) {
-					if (auto instr = dyn_cast<DbgDeclareInst>(&*iit)) {
-
-
-
-
-
-					}
-				}
-			}
-#endif
-
-#if 0
-				if (auto instr = dyn_cast<Instruction>(*it)) {
-					analyzeMetadata(instr);
-				}
-			}
-
-#endif
-
-#if 0
-			errs() << "in args: \n";
-			for (auto it = inputargs.begin(); it != inputargs.end(); ++it) {
-				(*it)->dump();
-			}
-
-			errs() << "out args: \n";
-			for (auto it = outputargs.begin(); it != outputargs.end(); ++it) {
-				(*it)->dump();
-			}
-#endif
 
 			return false;
 		}
