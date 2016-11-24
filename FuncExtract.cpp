@@ -26,10 +26,12 @@ static cl::opt<std::string> BBListFilename("bblist",
 	   		cl::value_desc("filename"), cl::Required  );
 
 namespace {
+
 	typedef std::pair<unsigned,unsigned> RegionLoc;
 	typedef DenseMap<Value *, DILocalVariable *> VariableDbgInfo;
 
 	static RegionLoc getRegionLoc(const Region *);
+	static RegionLoc getFunctionLoc(const Function *);
 	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
 	static bool variableDeclaredInRegion(Value *, const RegionLoc&, const VariableDbgInfo&);
 										 
@@ -40,7 +42,7 @@ namespace {
 		
 		for (auto blockIter = R->block_begin(); blockIter != R->block_end(); ++blockIter) 
 		for (auto instrIter = (*blockIter)->begin(); instrIter != (*blockIter)->end(); ++instrIter) {
-			const DebugLoc& x = instrIter->getDebugLoc(); //FIXME invalid debugloc? 
+			const DebugLoc& x = instrIter->getDebugLoc(); 
 			if (x) {
 				min = std::min(min, x.getLine());
 				max = std::max(max, x.getLine());
@@ -48,6 +50,29 @@ namespace {
 		}
 
 		return std::pair<unsigned,unsigned>(min, max);
+	}
+
+
+	static RegionLoc getFunctionLoc(const Function *F) {
+		if ( !F->hasMetadata() || !isa<DISubprogram>(F->getMetadata(0)) ) { 
+			errs() << "bad debug meta\n";
+			return RegionLoc(-1, -1); 
+		}
+
+		Metadata *M = F->getMetadata(0);
+		unsigned min = cast<DISubprogram>(M)->getLine(); 
+		unsigned max = std::numeric_limits<unsigned>::min();
+
+		for (auto blockIter = F->begin(); blockIter != F->end(); ++blockIter) 
+		for (auto instrIter = (*blockIter).begin(); instrIter != (*blockIter).end(); ++instrIter) {
+			const DebugLoc& x = instrIter->getDebugLoc();
+			if (x) { 
+				min = std::min(min, x.getLine());
+				max = std::max(max, x.getLine()); 
+			}
+		}
+			
+		return RegionLoc(min, max); 
 	}
 
 	
@@ -386,10 +411,12 @@ retlabel:
 		out << "}\n";
 	}
 
-	static void writeRegionInfo(RegionLoc& loc, std::ofstream& out) {
-		out << "Region {\n";
-		out << "START: " << loc.first  << "\n"; 
-		out << "END: "   << loc.second << "\n"; 
+	static void writeFileInfo(RegionLoc& loc, RegionLoc& func, std::ofstream& out) {
+		out << "FileInfo {\n";
+		out << "REGIONSTART: " << loc.first  << "\n"; 
+		out << "REGIONEND: "   << loc.second << "\n"; 
+		out << "FUNCSTART: "   << func.first << "\n";
+		out << "FUNCEND: "     << func.second << "\n";
 		out << "}\n";
 	}
 
@@ -411,8 +438,11 @@ retlabel:
 			if (!isTargetRegion(R, funcs)) { return false; }
 
 			errs() << "Found region!\n";
+			
 
+			Function *F = R->getEntry()->getParent();
 			std::pair<unsigned,unsigned> regionBounds = getRegionLoc(R);
+			RegionLoc functionBounds = getFunctionLoc(F);
 
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
@@ -426,7 +456,6 @@ retlabel:
 			DenseSet<Value *> outputargs;
 			DenseMap<Value *, DILocalVariable *> debugInfo;
 
-			Function *F = R->getEntry()->getParent();
 			getVariableDebugInfo(F, debugInfo);
 
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
@@ -439,7 +468,7 @@ retlabel:
 			std::ofstream outfile;
 			outfile.open("extractinfo.txt", std::ofstream::out);
 			// write region bounds...
-			writeRegionInfo(regionBounds, outfile);
+			writeFileInfo(regionBounds, functionBounds, outfile);
 			// dump variable info...
 			for (Value *V : inputargs)  { writeValueInfo(V, debugInfo, true,  outfile); }
 			for (Value *V : outputargs) { writeValueInfo(V, debugInfo, false, outfile); }
