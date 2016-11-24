@@ -1,15 +1,17 @@
 import sys
 
-class RegionInfo:
-    def __init__(self, _start, _end):
-        self.start = _start
-        self.end = _end
+class FileInfo:
+    def __init__(self):
+        self.fstart = -1
+        self.fend = -1 
+        self.rstart = -1
+        self.rend = -1
 
     def valid(self):
-        return self.start != -1 and self.end != -1
+        return self.fstart != -1 and self.fend != -1 and self.rstart != -1 and self.rend != -1
 
     def __repr__(self):
-        return '<RegionInfo start:%s end:%s>' % (self.start, self.end)
+        return '<FileInfo rstart:%s rend:%s fstart:%s fend:%s>' % (self.rstart, self.rend, self.fstart,self.fend)
 
 
 class Variable: 
@@ -23,7 +25,7 @@ class Variable:
         return self.name != "" and self.type != "" and self.ptrl != -1
 
     def __repr__(self):
-        return '<RegionInfo name:%s type:%s ptrl:%s isoutput:%s>' % (self.name, self.type, self.ptrl, self.isoutput)
+        return '<Variable name:%s type:%s ptrl:%s isoutput:%s>' % (self.name, self.type, self.ptrl, self.isoutput)
 
 def sanitize(line):
     line = line.strip(" ")
@@ -32,8 +34,8 @@ def sanitize(line):
     return line
 
 
-def parseRegionInfo(f):
-    regionInfo = RegionInfo(-1, -1)
+def parseFileInfo(f):
+    fileInfo = FileInfo()
 
     line = f.readline()
     while line.find('}') == -1: 
@@ -45,16 +47,18 @@ def parseRegionInfo(f):
         if len(line) != 2:
             sys.stdout.write('Bad line: ' + str(line) + '\n')
             sys.exit(1)
-        if line[0] == 'START': regionInfo.start = int(line[1])
-        if line[0] == 'END'  : regionInfo.end   = int(line[1])
+        if line[0] == 'REGIONSTART': fileInfo.rstart = int(line[1])
+        if line[0] == 'REGIONEND'  : fileInfo.rend   = int(line[1])
+        if line[0] == 'FUNCSTART'  : fileInfo.fstart = int(line[1])
+        if line[0] == 'FUNCEND'    : fileInfo.fend   = int(line[1])
         line = f.readline()
 
-    if not regionInfo.valid():
+    if not fileInfo.valid():
         sys.stdout.write('invalid region info object\n')
         sys.exit(1)
 
-    print(regionInfo)
-    return regionInfo
+    print(fileInfo)
+    return fileInfo 
 
 
 
@@ -96,7 +100,7 @@ def main():
     line = f.readline()
     while line != '':
         line = sanitize(line)
-        if line.find('Region{') != -1: parseRegionInfo(f)
+        if line.find('FileInfo{') != -1: parseFileInfo(f)
         if line.find('Variable{') != -1: parseVariable(f)
          
 
