@@ -79,7 +79,6 @@ def parseFileInfo(f):
         sys.stdout.write('invalid region info object\n')
         sys.exit(1)
 
-    print(fileInfo)
     return fileInfo 
 
 
@@ -112,7 +111,6 @@ def parseVariable(f):
         sys.stdout.write('invalid variable object\n')
         sys.exit(1)
 
-    print(variable)
     return variable
 
 
@@ -159,6 +157,7 @@ def extract(srcdata, llvmdata):
     fileinfo = llvmdata[0]
     variables = llvmdata[1]
     regionEdges = llvmdata[2] ## TODO nothing here yet
+    function = srcdata[0]
     region = srcdata[1]
     #TODO analyze areas of interest - i.e. lines that point to external basicblock - we might have 
     # return statement or goto statement there. 
@@ -194,7 +193,16 @@ def extract(srcdata, llvmdata):
         sys.stdout.write('\t'+f)
     for (key, value) in region.items():
         sys.stdout.write(value)
+    sys.stdout.write('}\n')
 
+    print('\n')
+    ## write original function
+    for i in range(fileinfo.fstart, fileinfo.rstart):
+        sys.stdout.write(function[i])
+    sys.stdout.write(funccall)
+    for i in range(fileinfo.rend + 1, fileinfo.fend + 1):
+        sys.stdout.write(function[i])
+    sys.stdout.write('}\n')
 
 
 def main():
