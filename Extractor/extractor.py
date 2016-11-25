@@ -1,4 +1,5 @@
 import sys
+import re
 
 class FileInfo:
     def __init__(self):
@@ -36,7 +37,7 @@ class Variable:
         if not self.isoutput: 
             ## we pass a pointer to the variable into the function
             ptr = ''.join(['*' for i in range(self.ptrl + 1)])
-            return '%s %s%s_ptr' % (self.type, ptr, self.name)
+            return '%s %s%s' % (self.type, ptr, self.name)
 
 
 class Function:
@@ -47,6 +48,35 @@ class Function:
     def gettype():
         if len(self.outputargs) == 0:
             return 'void'
+
+
+##
+def findIdentifier(line, variable):
+    regex = re.compile('[a-zA-Z0-9_]')
+    idx = line.find(variable.name)
+    print (variable.name, idx)
+    while idx != -1:
+        # if whatever comes before or after the variable still contains alphanumerics, 
+        # then variable itself is not exact match.
+        begin = idx - 1
+        end   = idx + len(variable.name) 
+        if begin >= 0 and regex.match(line[begin]):
+            idx = line.find(variable.name, end)
+            continue
+        if end < len(line) and regex.match(line[end]):
+            idx = line.find(variable.name, end)
+            continue
+
+        newline = ""
+        for i in range(idx):
+           newline = newline + line[i]
+        newline = newline + '(*' + variable.name + ')'
+        for i in range(end, len(line)):
+           newline = newline + line[i]
+        line = newline
+        idx = line.find(variable.name, end + 2)
+
+    return line
 
 
 def sanitize(line):
@@ -119,8 +149,6 @@ def parseLLVMInfo():
     variables = []  
     regionEdges = []
 
-    
-
     f = open(sys.argv[1])
     line = f.readline()
     while line != '':
@@ -129,6 +157,7 @@ def parseLLVMInfo():
         if line.find('Variable{') != -1: variables.append(parseVariable(f))
         line = f.readline()
 
+    f.close()
     return (fileInfo, variables, regionEdges)
 
 
@@ -148,6 +177,7 @@ def parseSrcFile(fileInfo):
         line = f.readline()
         linenum = linenum + 1
 
+    f.close()
     return (function, region)
 
 
@@ -177,32 +207,33 @@ def extract(srcdata, llvmdata):
     funcdecl = 'void extracted(%s) {\n' % (funcargs)
     funccall = 'extracted(%s);\n' % (callargs)
 
-    ## dereference passed pointers inside the function 
-    fncontextrestore = []
-    for v in variables:
-        var = '%s%s = *%s_ptr;\n' %(v.gettype(), v.name, v.name)
-        fncontextrestore.append(var)
+    line = '12+outptr1+outptr1+outptr2+r+b+g'
+    for variable in variables:
+        line = findIdentifier(line, variable)
+    
+    print(line)
+        
+
     
     ## write extracted function 
     #extracted region's first line should have only one tab. Readjust tab count as necessary
     #TODO
 
-    tabcount = region[fileinfo.rstart].count('\t') 
-    sys.stdout.write(funcdecl)
-    for f in fncontextrestore:
-        sys.stdout.write('\t'+f)
-    for (key, value) in region.items():
-        sys.stdout.write(value)
-    sys.stdout.write('}\n')
 
-    print('\n')
+    #tabcount = region[fileinfo.rstart].count('\t') 
+    #sys.stdout.write(funcdecl)
+    #for (key, value) in region.items():
+    #    sys.stdout.write(value)
+    #sys.stdout.write('}\n')
+
+    #print('\n')
     ## write original function
-    for i in range(fileinfo.fstart, fileinfo.rstart):
-        sys.stdout.write(function[i])
-    sys.stdout.write(funccall)
-    for i in range(fileinfo.rend + 1, fileinfo.fend + 1):
-        sys.stdout.write(function[i])
-    sys.stdout.write('}\n')
+    #for i in range(fileinfo.fstart, fileinfo.rstart):
+    #    sys.stdout.write(function[i])
+    #sys.stdout.write(funccall)
+    #for i in range(fileinfo.rend + 1, fileinfo.fend + 1):
+    #    sys.stdout.write(function[i])
+    #sys.stdout.write('}\n')
 
 
 def main():
