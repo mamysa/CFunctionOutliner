@@ -54,7 +54,6 @@ class Function:
 def findIdentifier(line, variable):
     regex = re.compile('[a-zA-Z0-9_]')
     idx = line.find(variable.name)
-    print (variable.name, idx)
     while idx != -1:
         # if whatever comes before or after the variable still contains alphanumerics, 
         # then variable itself is not exact match.
@@ -207,11 +206,10 @@ def extract(srcdata, llvmdata):
     funcdecl = 'void extracted(%s) {\n' % (funcargs)
     funccall = 'extracted(%s);\n' % (callargs)
 
-    line = '12+outptr1+outptr1+outptr2+r+b+g'
-    for variable in variables:
-        line = findIdentifier(line, variable)
-    
-    print(line)
+    for (linenum, line) in region.items():
+        for variable in variables:
+            line = findIdentifier(line, variable)
+        region[linenum] = line
         
 
     
@@ -220,11 +218,11 @@ def extract(srcdata, llvmdata):
     #TODO
 
 
-    #tabcount = region[fileinfo.rstart].count('\t') 
-    #sys.stdout.write(funcdecl)
-    #for (key, value) in region.items():
-    #    sys.stdout.write(value)
-    #sys.stdout.write('}\n')
+    tabcount = region[fileinfo.rstart].count('\t') 
+    sys.stdout.write(funcdecl)
+    for (key, value) in region.items():
+        sys.stdout.write(value)
+    sys.stdout.write('}\n')
 
     #print('\n')
     ## write original function
