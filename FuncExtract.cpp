@@ -12,6 +12,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <deque>
 #include <string>
@@ -34,7 +35,29 @@ namespace {
 	static RegionLoc getFunctionLoc(const Function *);
 	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
 	static bool variableDeclaredInRegion(Value *, const RegionLoc&, const VariableDbgInfo&);
-										 
+
+
+	// various XML helper functions as we are saving all the extracted info
+	// in XML-like format. Better than self-improvised markup.  
+	static std::string XMLOpeningTag(const char *key) {
+		std::stringstream stream;
+		stream << "<" << key << ">" << std::endl;
+		return stream.str();
+	}
+
+	static std::string XMLClosingTag(const char *key) {
+		std::stringstream stream;
+		stream << "</" << key << ">" << std::endl;
+		return stream.str();
+	}
+
+	template <typename T>
+	static std::string XMLElement(const char *key, T value) {
+		std::stringstream stream;
+		stream << "<" << key << ">" << value << "</" << key << ">" << std::endl;
+		return stream.str();
+	}
+
 
 	static std::pair<unsigned,unsigned> getRegionLoc(const Region *R) {
 		unsigned min = std::numeric_limits<unsigned>::max();
@@ -361,7 +384,7 @@ retlabel:
 	}
 
 
-	static void writeValueInfo(Value *V, const VariableDbgInfo& VDI, bool isInputVar, std::ofstream& out) {
+	static void writeValueInfo(Value *V, const VariableDbgInfo& VDI, bool isOutputVar, std::ofstream& out) {
 		auto iterator = VDI.find(V); 
 		if (iterator == VDI.end()) {
 			V->dump();
@@ -372,54 +395,49 @@ retlabel:
 		DILocalVariable *LV =  iterator->getSecond();
 		DIType *T = dyn_cast<DIType>(iterator->getSecond()->getRawType());
 
-
-		out << "Variable {\n"; 
-		if (isInputVar) { out << "bINPUT: true\n"; }
-		else { out << "bINPUT: false\n"; }
+		out << XMLOpeningTag("variable");
+		if (isOutputVar) { out << XMLElement("isoutput", true); }
 
 
-		if (!T) { 
-			out << "TYPE: UNKNOWN\n";
-		}
+		// this isn't supposed to happen.
+		if (!T) { out << XMLElement("type", "unknown"); }
 
 		auto TT = getBaseType(T);
-		out << "NAME: " << LV->getName().str() << "\n";
-		out << "PTRL: " << TT.second << "\n";
+		out << XMLElement("name", LV->getName().str());
+		out << XMLElement("ptrl", TT.second);
 
 
 		if (auto *a = dyn_cast<DIBasicType>(TT.first)) {
-			out << "TYPE: " << a->getName().str() <<"\n";
+			out << XMLElement("type", a->getName().str());
 		}
 
 		if (auto *a = dyn_cast<DICompositeType>(TT.first)) {
 			if (a->getTag() == dwarf::DW_TAG_structure_type) { 
-				out << "TYPE: struct " << a->getName().str() <<"\n"; 
+				std::stringstream stream; 
+				stream << "struct " << a->getName().str();
+				out << XMLElement("type", stream.str());
 			}
 
 			if (a->getTag() == dwarf::DW_TAG_array_type) {
-				out << "TYPE: " << a->getName().str() <<  "\n";
+				out << XMLElement("type", a->getName().str());
 			}
 		}
 
 		if (auto *a = dyn_cast<DIDerivedType>(TT.first)) {
 			if (a->getTag() == dwarf::DW_TAG_typedef) { 
-				out << "TYPE: " << a->getName().str() <<  "\n"; 
+				out << XMLElement("type", a->getName().str());
 			}
 		}
 
-
-		out << "}\n";
+		out << XMLClosingTag("variable");
 	}
 
-	static void writeFileInfo(RegionLoc& loc, RegionLoc& func, std::ofstream& out) {
-		out << "FileInfo {\n";
-		out << "REGIONSTART: " << loc.first  << "\n"; 
-		out << "REGIONEND: "   << loc.second << "\n"; 
-		out << "FUNCSTART: "   << func.first << "\n";
-		out << "FUNCEND: "     << func.second << "\n";
-		out << "}\n";
+	static void writeLocInfo(RegionLoc& loc, const char *tag, std::ofstream& out) {
+		out << XMLOpeningTag(tag); 
+		out << XMLElement("start", loc.first);
+		out << XMLElement("end",   loc.second);
+		out << XMLClosingTag(tag); 
 	}
-
 										 
 	struct FuncExtract : public RegionPass {
 		static char ID;
@@ -467,11 +485,16 @@ retlabel:
 
 			std::ofstream outfile;
 			outfile.open("extractinfo.txt", std::ofstream::out);
-			// write region bounds...
-			writeFileInfo(regionBounds, functionBounds, outfile);
+			//writing stuff in xml-like format
+			outfile << XMLOpeningTag("extractinfo");
+			//writeFileInfo(regionBounds, functionBounds, outfile);
+			writeLocInfo(regionBounds, "region", outfile);
+			writeLocInfo(functionBounds, "function", outfile);
+
 			// dump variable info...
-			for (Value *V : inputargs)  { writeValueInfo(V, debugInfo, true,  outfile); }
-			for (Value *V : outputargs) { writeValueInfo(V, debugInfo, false, outfile); }
+			for (Value *V : inputargs)  { writeValueInfo(V, debugInfo, false, outfile); }
+			for (Value *V : outputargs) { writeValueInfo(V, debugInfo, true,  outfile); }
+			outfile << XMLClosingTag("extractinfo");
 			outfile.close();
 
 

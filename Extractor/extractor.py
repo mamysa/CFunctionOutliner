@@ -1,5 +1,8 @@
 import sys
 import re
+import xml.etree.cElementTree as ET
+
+
 
 class FileInfo:
     def __init__(self):
@@ -14,13 +17,28 @@ class FileInfo:
     def __repr__(self):
         return '<FileInfo rstart:%s rend:%s fstart:%s fend:%s>' % (self.rstart, self.rend, self.fstart,self.fend)
 
-class Variable: 
-    def __init__(self, _name, _type, _ptrl, _isoutput):
-        self.isoutput = _isoutput 
-        self.name = _name 
-        self.type = _type 
-        self.ptrl = _ptrl 
+    @staticmethod
+    def create(xml):
+        pass
 
+
+class LocInfo:
+    @staticmethod
+    def create(xml):
+        start = xml.find('start')
+        end = xml.find('end')
+        if start == None or start == None:
+            raise Exception("Missing region info.") 
+
+        locinfo = LocInfo()
+        setattr(locinfo, 'start', int(start.text)) 
+        setattr(locinfo, 'end',   int(end.text)  ) 
+        return locinfo 
+
+    def __repr__(self):
+        return '<LocInfo start:%s end:%s>' % (self.start, self.end)
+
+class Variable: 
     def valid(self):
         return self.name != "" and self.type != "" and self.ptrl != -1
 
@@ -31,13 +49,25 @@ class Variable:
         ptr = ''.join(['*' for i in range(self.ptrl)])
         return '%s %s' % (self.type, ptr)
 
-    def tostring(self):
-        if self.isoutput:
-            return ""
-        if not self.isoutput: 
-            ## we pass a pointer to the variable into the function
-            ptr = ''.join(['*' for i in range(self.ptrl + 1)])
-            return '%s %s%s' % (self.type, ptr, self.name)
+    @staticmethod
+    def create(xml):
+        name = xml.find('name')
+        ptrl = xml.find('ptrl')
+        type = xml.find('type')
+        isoutput = xml.find('isoutput')
+        
+        #name, ptrl and type are required
+        if name == None or ptrl == None or type == None:
+            raise Exception('Missing variable info');
+        
+        variable = Variable()
+        setattr(variable, 'name', name.text)
+        setattr(variable, 'type', type.text)
+        setattr(variable, 'ptrl', int(ptrl.text))
+        setattr(variable, 'isoutput', False)
+        if (isoutput != None):
+            variable.isoutput = bool(isoutput.text)
+        return variable
 
 
 class Function:
@@ -50,7 +80,6 @@ class Function:
             return 'void'
 
 
-##
 def findIdentifier(line, variable):
     regex = re.compile('[a-zA-Z0-9_]')
     idx = line.find(variable.name)
@@ -76,6 +105,9 @@ def findIdentifier(line, variable):
         idx = line.find(variable.name, end + 2)
 
     return line
+
+
+
 
 
 def sanitize(line):
@@ -239,9 +271,27 @@ def main():
         sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
         sys.exit(1)
 
-    llvmdata = parseLLVMInfo()
-    srcdata = parseSrcFile(llvmdata[0])
-    extract(srcdata, llvmdata)
+
+    tree = ET.parse(sys.argv[1]);
+
+
+    for child in tree.getroot():
+        if (child.tag == 'region'):
+            regioninfo = LocInfo.create(child)
+            print(regioninfo)
+
+        if (child.tag == 'function'):
+            functionInfo = LocInfo.create(child)
+            print(functionInfo)
+
+        if (child.tag == 'variable'):
+            variable = Variable.create(child)
+            print(variable)
+
+
+    #llvmdata = parseLLVMInfo()
+    #srcdata = parseSrcFile(llvmdata[0])
+    #extract(srcdata, llvmdata)
 
 
 
