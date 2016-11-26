@@ -3,25 +3,6 @@ import re
 import xml.etree.cElementTree as ET
 
 
-
-class FileInfo:
-    def __init__(self):
-        self.fstart = -1
-        self.fend = -1 
-        self.rstart = -1
-        self.rend = -1
-
-    def valid(self):
-        return self.fstart != -1 and self.fend != -1 and self.rstart != -1 and self.rend != -1
-
-    def __repr__(self):
-        return '<FileInfo rstart:%s rend:%s fstart:%s fend:%s>' % (self.rstart, self.rend, self.fstart,self.fend)
-
-    @staticmethod
-    def create(xml):
-        pass
-
-
 class LocInfo:
     @staticmethod
     def create(xml):
@@ -38,16 +19,25 @@ class LocInfo:
     def __repr__(self):
         return '<LocInfo start:%s end:%s>' % (self.start, self.end)
 
+#######################################
 class Variable: 
-    def valid(self):
-        return self.name != "" and self.type != "" and self.ptrl != -1
-
     def __repr__(self):
         return '<Variable name:%s type:%s ptrl:%s isoutput:%s>' % (self.name, self.type, self.ptrl, self.isoutput)
 
     def gettype(self):
         ptr = ''.join(['*' for i in range(self.ptrl)])
         return '%s %s' % (self.type, ptr)
+
+    def getname(self):
+        return self.name
+
+    def tostring(self):
+        if self.isoutput:
+            return ""
+        if not self.isoutput: 
+            ## we pass a pointer to the variable into the function
+            ptr = ''.join(['*' for i in range(self.ptrl + 1)])
+            return '%s %s%s' % (self.type, ptr, self.name)
 
     @staticmethod
     def create(xml):
@@ -69,17 +59,47 @@ class Variable:
             variable.isoutput = bool(isoutput.text)
         return variable
 
-
+## Function class. 
 class Function:
-    def __init__(self, _type, inputargs, outputargs):
-        self.inputargs = inputargs
-        self.outputargs = outputargs
+    def __init__(self):
+        self.inputargs = [] 
+        self.outputargs = [] 
+
+    def addInput(self, variable):
+        self.inputargs.append(variable)
+
+    def addOutput(self, variable):
+        self.outputargs.append(variable)
 
     def gettype():
         if len(self.outputargs) == 0:
             return 'void'
+        return 'todo'
 
+    def getFnDecl(self):
+        args = ''
+        for variable in self.inputargs:
+            args = args + variable.gettype() + '*' + variable.getname() + ', '
+        args = args.rstrip(', ')
+        type = self.gettype()
+        return '%s extracted(%s) {' % (type, args)
 
+    def getFnCall():
+        for variable in self.inputargs:
+            args = args + '&' + variable.getname() + ', '
+        args = args.rstrip(', ')
+        return 'extracted(%s);' % (args) ##TODO retvals
+
+#GLOBALS 
+regionInfo = None
+functionInfo = None
+regionlines = {}
+functionlines = {}
+function = Function() 
+
+# dereferences function inputs. The problem with this approach is variable scope.
+# c doesn't prevent variable shadowing and we might end up having two variables with the same 
+# name. How to fix: have different names for each variable... :) 
 def findIdentifier(line, variable):
     regex = re.compile('[a-zA-Z0-9_]')
     idx = line.find(variable.name)
@@ -103,94 +123,21 @@ def findIdentifier(line, variable):
            newline = newline + line[i]
         line = newline
         idx = line.find(variable.name, end + 2)
-
     return line
 
+def parseLLVMData():
+    global regionInfo 
+    global functionInfo 
 
-
-
-
-def sanitize(line):
-    line = line.strip(" ")
-    line = line.replace(' ' , '')
-    line = line.replace('\n', '')
-    return line
-
-
-def parseFileInfo(f):
-    fileInfo = FileInfo()
-
-    line = f.readline()
-    while line.find('}') == -1: 
-        if line == '':
-            sys.stdout.write('Unexpected end of file, exiting...\n')
-            sys.exit(1)
-        line = sanitize(line)
-        line = line.split(":") 
-        if len(line) != 2:
-            sys.stdout.write('Bad line: ' + str(line) + '\n')
-            sys.exit(1)
-        if line[0] == 'REGIONSTART': fileInfo.rstart = int(line[1])
-        if line[0] == 'REGIONEND'  : fileInfo.rend   = int(line[1])
-        if line[0] == 'FUNCSTART'  : fileInfo.fstart = int(line[1])
-        if line[0] == 'FUNCEND'    : fileInfo.fend   = int(line[1])
-        line = f.readline()
-
-    if not fileInfo.valid():
-        sys.stdout.write('invalid region info object\n')
-        sys.exit(1)
-
-    return fileInfo 
-
-
-
-def parseVariable(f):
-    variable = Variable("", "", -1, True)
-
-    line = f.readline()
-    while line.find('}') == -1: 
-        if line == '':
-            sys.stdout.write('Unexpected end of file, exiting...\n')
-            sys.exit(1)
-
-        line = line.strip(" ")
-        #line = sanitize(line)
-        line = line.replace('\n', '')
-        line = line.split(":") 
-        if len(line) != 2:
-            sys.stdout.write('Bad line: ' + str(line) + '\n')
-            sys.exit(1)
-        line[0] = line[0].strip(" ")
-        line[1] = line[1].strip(" ")
-        if line[0] == 'bINPUT': variable.isoutput = False 
-        if line[0] == 'NAME'  : variable.name = line[1]
-        if line[0] == 'TYPE'  : variable.type = line[1]
-        if line[0] == 'PTRL'  : variable.ptrl = int(line[1])
-        line = f.readline()
-
-    if not variable.valid():
-        sys.stdout.write('invalid variable object\n')
-        sys.exit(1)
-
-    return variable
-
-
-def parseLLVMInfo():
-    fileInfo = None
-    variables = []  
-    regionEdges = []
-
-    f = open(sys.argv[1])
-    line = f.readline()
-    while line != '':
-        line = sanitize(line)
-        if line.find('FileInfo{') != -1: fileInfo = parseFileInfo(f)
-        if line.find('Variable{') != -1: variables.append(parseVariable(f))
-        line = f.readline()
-
-    f.close()
-    return (fileInfo, variables, regionEdges)
-
+    tree = ET.parse(sys.argv[1]);
+    for child in tree.getroot():
+        if (child.tag == 'region'):
+            regionInfo = LocInfo.create(child)
+        if (child.tag == 'function'):
+            functionInfo = LocInfo.create(child)
+        if (child.tag == 'variable'):
+            variable = Variable.create(child)
+    print(regionInfo)
 
 def parseSrcFile(fileInfo):
     function = {}
@@ -207,13 +154,9 @@ def parseSrcFile(fileInfo):
                 function[linenum] = line
         line = f.readline()
         linenum = linenum + 1
-
     f.close()
-    return (function, region)
-
 
 ## the part where interesting things happen.  
-
 def extract(srcdata, llvmdata):
     fileinfo = llvmdata[0]
     variables = llvmdata[1]
@@ -270,32 +213,11 @@ def main():
     if len(sys.argv) != 3:
         sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
         sys.exit(1)
-
-
-    tree = ET.parse(sys.argv[1]);
-
-
-    for child in tree.getroot():
-        if (child.tag == 'region'):
-            regioninfo = LocInfo.create(child)
-            print(regioninfo)
-
-        if (child.tag == 'function'):
-            functionInfo = LocInfo.create(child)
-            print(functionInfo)
-
-        if (child.tag == 'variable'):
-            variable = Variable.create(child)
-            print(variable)
-
+    parseLLVMData()
+    
 
     #llvmdata = parseLLVMInfo()
     #srcdata = parseSrcFile(llvmdata[0])
     #extract(srcdata, llvmdata)
-
-
-
-
-
 
 main()
