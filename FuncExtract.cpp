@@ -163,52 +163,33 @@ namespace {
 	}
 
 
-	static DenseSet<Value *> DFSInstruction(Instruction *I) {
-		DenseSet<Value *> collected;
-		DenseSet<Value *> visited; 
-		std::deque<Value *> stack;
+	static DenseSet<Instruction *> DFSInstruction(Instruction *I) {
+		DenseSet<Instruction *> visited; 
+
+		std::deque<Instruction *> stack;
 		stack.push_back(I);
 
 		while (stack.size() != 0) {
-			Value *current = stack.back();
+			Instruction *current = stack.back();
 			stack.pop_back();
-			
-			if (visited.find(current) != visited.end()) {
-				continue;
-			}
-
-			// terminate if current instruction is alloca 
-			if (auto alloca = dyn_cast<AllocaInst>(current)) {
-				collected.insert(alloca);
-			}
-
-		if (auto global = dyn_cast<GlobalValue>(current)) {
-				collected.insert(global);
-			}
-
+			if (visited.find(current) != visited.end()) { continue; }
 			visited.insert(current);
-			// FIXME more careful selection of operands for certain instructions 
-			if (auto a = dyn_cast<Instruction>(current)) {
-				if (auto b = dyn_cast<StoreInst>(a)) {
-					stack.push_back(b->getOperand(1));
-				}
-				else {
 
-					for (auto it = a->op_begin(); it != a->op_end(); ++it) {
-						if (auto instr = dyn_cast<Instruction>(*it)) {
-							stack.push_back(instr);	
-						}
-						if (auto global = dyn_cast<GlobalValue>(*it)) {
-							stack.push_back(global);	
-						}
-					}
+			for (auto it = current->op_begin(); it != current->op_end(); ++it) {
+				if (auto instr = dyn_cast<Instruction>(*it)) {
+					stack.push_back(instr);	
 				}
-
 			}
 
 		}
 
-		return collected;
+
+		for (Instruction *inst: visited) {
+			if (!isa<AllocaInst>(inst)) { visited.erase(inst); }
+
+		}
+
+		return visited;
 	}
 
 
@@ -267,7 +248,7 @@ namespace {
 								const std::pair<unsigned,unsigned>& regionBounds,
 								const DenseMap<Value *, DILocalVariable *>& debugInfo) {
 		static DenseSet<Value *> analyzed; 
-		DenseSet<Value *> sources = DFSInstruction(I);	
+		DenseSet<Instruction*> sources = DFSInstruction(I);	
 		for (auto it = sources.begin(); it != sources.end(); ++it) {
 			// we don't have to look at values we have seen before... 
 			if (analyzed.find(*it) != analyzed.end()) { continue; }
@@ -293,21 +274,10 @@ namespace {
 					}
 					if (isa<StoreInst>(I) && successors.find(parentBB) != successors.end()) {
 						if (variableDeclaredInRegion(instr, regionBounds, debugInfo)) 
-						outputargs.insert(instr); 
+							outputargs.insert(instr); 
 					}
 				}
 			}
-#if 0
-			if (auto global = dyn_cast<GlobalValue>(*it)) {
-				// globals are added to input argument list inconditionally. 
-				// if current instruction is store, we also add it to return values applying
-				// the same typing rules listed above
-				inputargs.insert(global); // FIXME also pushes memcpy??
-				if (isa<StoreInst>(I)) {
-					outputargs.insert(global);
-				}
-			}
-#endif
 		}
 	}
 
