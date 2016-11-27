@@ -11,6 +11,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -34,7 +35,9 @@ namespace {
 	static RegionLoc getRegionLoc(const Region *);
 	static RegionLoc getFunctionLoc(const Function *);
 	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
-	static bool variableDeclaredInRegion(Value *, const RegionLoc&, const VariableDbgInfo&);
+	static bool declaredInRegion(Value *, const RegionLoc&);
+	static bool isArgument(Value *);
+	static DenseSet<int> 
 
 
 	// various XML helper functions as we are saving all the extracted info
@@ -57,7 +60,6 @@ namespace {
 		stream << "<" << key << ">" << value << "</" << key << ">" << std::endl;
 		return stream.str();
 	}
-
 
 	static std::pair<unsigned,unsigned> getRegionLoc(const Region *R) {
 		unsigned min = std::numeric_limits<unsigned>::max();
@@ -163,30 +165,33 @@ namespace {
 	}
 
 
-	static DenseSet<Instruction *> DFSInstruction(Instruction *I) {
-		DenseSet<Instruction *> visited; 
+	static DenseSet<Value *> DFSInstruction(Value *I) {
+		DenseSet<Value *> visited; 
 
-		std::deque<Instruction *> stack;
+		std::deque<Value *> stack;
 		stack.push_back(I);
 
 		while (stack.size() != 0) {
-			Instruction *current = stack.back();
+			Value *current = stack.back();
 			stack.pop_back();
 			if (visited.find(current) != visited.end()) { continue; }
 			visited.insert(current);
 
-			for (auto it = current->op_begin(); it != current->op_end(); ++it) {
-				if (auto instr = dyn_cast<Instruction>(*it)) {
-					stack.push_back(instr);	
+			if (Instruction *instr = dyn_cast<Instruction>(current)) {
+				for (auto it = instr->op_begin(); it != instr->op_end(); ++it) {
+					if (auto instr = dyn_cast<Instruction>(*it)) {
+						stack.push_back(instr);	
+					}
+					if (auto argument = dyn_cast<Argument>(*it)) {
+						stack.push_back(argument);
+					}
 				}
 			}
 
 		}
 
-
-		for (Instruction *inst: visited) {
-			if (!isa<AllocaInst>(inst)) { visited.erase(inst); }
-
+		for (Value *inst: visited) {
+			if (!isa<AllocaInst>(inst) && !isa<Argument>(inst)) { visited.erase(inst); }
 		}
 
 		return visited;
@@ -231,36 +236,34 @@ namespace {
 		for (auto it = R->block_begin(); it != R->block_end(); ++it) { blocks.erase(*it); }
 	}
 
-	static void analyzeFunctionArguments(Region *R, 
-										 DenseSet<Value *>& inputargs) {
-		Function *F = R->getEntry()->getParent();
-		for (auto it = F->arg_begin(); it != F->arg_end(); ++it) {
-			inputargs.insert(&*it);
-		}
-	}
-
 
 	static void analyzeOperands(Instruction *I, 
 								const DenseSet<BasicBlock *>& predecessors,
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs,
-								const std::pair<unsigned,unsigned>& regionBounds,
-								const DenseMap<Value *, DILocalVariable *>& debugInfo) {
+								const std::pair<unsigned,unsigned>& regionBounds) {
 		static DenseSet<Value *> analyzed; 
-		DenseSet<Instruction*> sources = DFSInstruction(I);	
+		DenseSet<Value *> sources = DFSInstruction(I);	
 		for (auto it = sources.begin(); it != sources.end(); ++it) {
 			// we don't have to look at values we have seen before... 
 			if (analyzed.find(*it) != analyzed.end()) { continue; }
 			analyzed.insert(*it);
 
 			if (auto instr = dyn_cast<AllocaInst>(*it)) {
+				// when compiled with -O0 flag, all function arguments are copied onto the stack
+				// and debug info of corresponding alloca instructions tells us whether or not 
+				// it is used to store function arguments.
+				// I.E. avoid using -mem2reg opt pass
+				if (isArgument(instr)) {
+					inputargs.insert(instr);
+				}
 				// first we check if source instruction is allocated outside the region,
 				// in one of the predecessor basic blocks. We do not care if the instruction 
 				// is actually used (stored into, etc), if we did that would cause problems 
 				// for stack-allocated arrays as those can be uninitialized.
 				if (predecessors.find(instr->getParent()) != predecessors.end()) {
-					if (!variableDeclaredInRegion(instr, regionBounds, debugInfo)) 
+					if (!declaredInRegion(instr, regionBounds)) 
 						inputargs.insert(instr);
 				} 
 				// if instruction is used by some instruction is successor basic block, we add 
@@ -269,11 +272,11 @@ namespace {
 					Instruction *userinstr = cast<Instruction>(*userit);	
 					BasicBlock *parentBB = userinstr->getParent(); 
 					if (isa<MemCpyInst>(I) && successors.find(parentBB) != successors.end()) {
-						if (variableDeclaredInRegion(instr, regionBounds, debugInfo)) 
+						if (declaredInRegion(instr, regionBounds)) 
 						outputargs.insert(instr);
 					}
 					if (isa<StoreInst>(I) && successors.find(parentBB) != successors.end()) {
-						if (variableDeclaredInRegion(instr, regionBounds, debugInfo)) 
+						if (declaredInRegion(instr, regionBounds)) 
 							outputargs.insert(instr); 
 					}
 				}
@@ -281,49 +284,31 @@ namespace {
 		}
 	}
 
-	// extracts debug metadata for every local variable and stores it in the map. We need this
-	// to determine where variables were originally declared.
-	static void getVariableDebugInfo(Function *F, DenseMap<Value *, DILocalVariable *>& map) {
-		for (BasicBlock& BB : F->getBasicBlockList()) 
-		for (Instruction& I :   (&BB)->getInstList()) {
-			if (!isa<AllocaInst>(&I)) 
-				continue; 
-
-			if (auto *LSM = LocalAsMetadata::getIfExists(&I)) 
-			if (auto *MDV = MetadataAsValue::getIfExists((&I)->getContext(), LSM)) {
-				for (User *U : MDV->users()) {
-					if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(U)) {
-						DILocalVariable *local = DDI->getVariable();
-						std::pair<Value *, DILocalVariable *> kv(&I, local);
-						map.insert(kv);
-					}
-				}
-			}
-		}
+	// determines if given variable (alloca) is declared in the region by making use
+	// of line numbers provided by debug metadata.
+	static bool declaredInRegion(Value *V, const RegionLoc& regionBounds) {
+		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
+		if (!DDI) { return false; }
+		DILocalVariable *DLV = DDI->getVariable();
+		return (regionBounds.first <= DLV->getLine() && DLV->getLine() <= regionBounds.second);
 	}
 
-
-	static bool variableDeclaredInRegion(Value *V, const std::pair<unsigned,unsigned>& regionBounds, 
-										 const DenseMap<Value *, DILocalVariable *>& debugInfo) { 
-		auto iterator = debugInfo.find(V);
-		if (iterator == debugInfo.end()) {
-			errs() << "No debug info for variable: \n";
-			V->dump();
-			return false;
-
-		}
-		DILocalVariable *DLV = iterator->getSecond();
-		unsigned line = DLV->getLine();
-		return (regionBounds.first <= line && line <= regionBounds.second);
+	// debug info also tells us if given alloca istruction is used for storing function
+	// arguments. Convenient as we don't need to manually look for matching AllocaInst. 
+	static bool isArgument(Value *V) {
+		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
+		if (!DDI) { return false; }
+		DILocalVariable *DLV = DDI->getVariable();
+		return (DLV->getArg() != 0);
 	}
 
-
+	// finds the time we can use by traversing pointers...
 	static std::pair<DIType *, int>  getBaseType(DIType *T) {
 		int ptrcount = 0;
 		Metadata *md = T;	
 
 restart:
-		if (auto *a = dyn_cast<DIBasicType>(md)) { 
+		if (isa<DIBasicType>(md)) { 
 			goto retlabel; 
 		}
 
@@ -354,20 +339,26 @@ retlabel:
 	}
 
 
-	static void writeValueInfo(Value *V, const VariableDbgInfo& VDI, bool isOutputVar, std::ofstream& out) {
-		auto iterator = VDI.find(V); 
-		if (iterator == VDI.end()) {
-			V->dump();
-			errs() << "Unknown variable, skipping...";
+	static void writeValueInfo(Value *V, bool isOutputVar, std::ofstream& out) {
+		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
+
+		// only happens when variable does not exist in original source code. It is fine 
+		// as long as it happens only to %retval or equivalent. 
+		if (!DDI) {
+			errs() << "Missing debug info, skipping: \n"; V->dump();
 			return;
 		}
 
-		DILocalVariable *LV =  iterator->getSecond();
-		DIType *T = dyn_cast<DIType>(iterator->getSecond()->getRawType());
+		DILocalVariable *LV = DDI->getVariable();
+		if (!LV) {
+			errs() << "Missing debug info, skipping: \n"; V->dump();
+			return;
+		}
+
+		DIType *T = dyn_cast<DIType>(LV->getRawType());
 
 		out << XMLOpeningTag("variable");
 		if (isOutputVar) { out << XMLElement("isoutput", true); }
-
 
 		// this isn't supposed to happen.
 		if (!T) { out << XMLElement("type", "unknown"); }
@@ -414,14 +405,6 @@ retlabel:
 		FuncExtract() : RegionPass(ID) {  }
 		StringMap<DenseSet<StringRef>> funcs;
 
-
-// find successors / predecessors
-// for each instruction in region 
-// if instruction has users in successors -> output arg
-// for each operand in instruction 
-// if operand has users in  predecessors -> input arg
-// if operand has users in successors -> output arg
-		
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
 			if (!isTargetRegion(R, funcs)) { return false; }
 
@@ -442,15 +425,13 @@ retlabel:
 
 			DenseSet<Value *> inputargs;
 			DenseSet<Value *> outputargs;
-			DenseMap<Value *, DILocalVariable *> debugInfo;
 
-			getVariableDebugInfo(F, debugInfo);
 
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
 				if (!isa<StoreInst>(I) && !isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
-				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, debugInfo );
+				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds);
 			}
 
 			std::ofstream outfile;
@@ -462,18 +443,10 @@ retlabel:
 			writeLocInfo(functionBounds, "function", outfile);
 
 			// dump variable info...
-			for (Value *V : inputargs)  { writeValueInfo(V, debugInfo, false, outfile); }
-			for (Value *V : outputargs) { writeValueInfo(V, debugInfo, true,  outfile); }
+			for (Value *V : inputargs)  { writeValueInfo(V, false, outfile); }
+			for (Value *V : outputargs) { writeValueInfo(V, true,  outfile); }
 			outfile << XMLClosingTag("extractinfo");
 			outfile.close();
-
-
-#if 0
-			if (includesEntryBasicBlock(R)) {
-				//analyzeFunctionArguments(R, inputargs);
-			}
-#endif
-			
 
 			return false;
 		}
@@ -485,6 +458,7 @@ retlabel:
 			if (read != 0) { return false; }
 			read = 1;
 			readBBListFile(funcs, BBListFilename);
+			errs() << "done reading\n";
 			return false;	
 		}
 
