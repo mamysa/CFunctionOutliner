@@ -206,6 +206,26 @@ def findIdentifier(line, variable):
         idx = line.find(variable.name, end + 2)
     return line
 
+# Regions sometimes do not include closing brace so we need to count them take one spare out from
+# funcloc... This function also counts braces that are a part of a string...FIXME
+def regionClosingBrace():
+    global reginfo
+    numopeningbraces = 0
+    numclosingbraces = 0
+    for line in regloc.values():
+        print(line)
+        numopeningbraces = numopeningbraces + line.count('{')
+        numclosingbraces = numclosingbraces + line.count('}')
+    # take the first line that has closing brace in it...
+    print(numopeningbraces, numclosingbraces)
+    if numclosingbraces < numopeningbraces:
+        for i in range(reginfo.end + 1, funinfo.end): 
+            if funloc[i].count('}') == 1:
+                regloc[i] = funloc[i]
+                funloc[i] = None
+                reginfo.end = i;
+                break
+
 #Boring parsing stuff
 def parseLLVMData():
     global reginfo 
@@ -270,7 +290,7 @@ def extract():
     sys.stdout.write(func.restoreReturnedValues()) ## if function is not void, restore all variables
     for i in range(reginfo.end + 1, funinfo.end + 1):
         sys.stdout.write(funloc[i])
-    sys.stdout.write('}\n')
+    #sys.stdout.write('}\n')
 
 
 def main():
@@ -279,6 +299,7 @@ def main():
         sys.exit(1)
     parseLLVMData()
     parseSrcFile()
+    regionClosingBrace()
     extract()    
 
     #llvmdata = parseLLVMInfo()
