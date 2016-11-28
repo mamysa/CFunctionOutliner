@@ -101,10 +101,15 @@ class Function:
 
     # in case if extracted function returns something, return structure needs to be defined first. 
     # returns 'struct struct_type retval' or nothing if the fuction does not return anything
+    # if we have special retvalues, we initialize boolean values to 0.
     def declareReturnValue(self):
-        if len(self.outputargs) == 0:
+        if len(self.outputargs) == 0 and len(self.outputspecial) == 0:
             return ""
-        return self.retvaltype + ' ' + self.retvalname + ';\n'
+        out = '%s %s;\n' % (self.retvaltype, self.retvalname)
+        for var in self.outputspecial:
+            out = out + '%s.%s_%s = 0;\n' % (self.retvalname, self.exitbool, var[0])
+        return out
+
 
     # if function returns, we need to assign to values in the structure where appropriate.
     def setReturnValues(self):
@@ -160,8 +165,6 @@ class Function:
                 out = out + '%s.%s_%s = %s;\n' % (self.retvalname, self.exitvalue, exit, retval)
                 out = out + 'return %s;\n' % (self.retvalname)
                 regionloc[exit] = out
-
-
 
 #GLOBALS 
 reginfo = None
