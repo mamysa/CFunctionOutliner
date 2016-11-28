@@ -63,7 +63,8 @@ class Function:
     def __init__(self):
         self.inputargs = [] 
         self.outputargs = [] 
-        self.retvalname = 'extracted_retval';
+        self.retvalname = 'extractedretval'
+        self.retvaltype = 'struct extracted_retval'
 
     def addInput(self, variable):
         self.inputargs.append(variable)
@@ -90,6 +91,25 @@ class Function:
             args = args + '&' + variable.getname() + ', '
         args = args.rstrip(', ')
         return 'extracted(%s);\n' % (args) ##TODO retvals
+
+    # in case if extracted function returns something, return structure needs to be defined first. 
+    # returns 'struct struct_type retval' or nothing if the fuction does not return anything
+    def declareReturnValue(self):
+        if len(self.outputargs) == 0:
+            return ""
+        return self.retvaltype + ' ' + self.retvalname + ';\n'
+
+    # if function returns, we need to assign to values in the structure where appropriate.
+    def setReturnValues(self):
+        if len(self.outputargs) == 0:
+            return ""
+        out = ''
+        for var in self.outputargs:
+            temp = '%s.%s = %s;\n' % (self.retvalname, var.getname(), var.getname())
+            out = out + temp
+        retstmt = 'return %s;\n' % self.retvalname;
+        out = out + retstmt
+        return out
 
     #if extracted function returns something, we have to declare these variables 
     # in the original function and assign correct return values.
@@ -199,8 +219,10 @@ def extract():
     #TODO copy everything from original file before given function and after 
     sys.stdout.write(func.getReturnTypeDefinition())
     sys.stdout.write(func.getFnDecl())
+    sys.stdout.write(func.declareReturnValue())
     for line in regloc.values():
         sys.stdout.write(line)
+    sys.stdout.write(func.setReturnValues())
     sys.stdout.write('}\n')
 
     # write original function
