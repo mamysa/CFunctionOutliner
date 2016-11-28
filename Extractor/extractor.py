@@ -63,14 +63,21 @@ class Function:
     def __init__(self):
         self.inputargs = [] 
         self.outputargs = [] 
+        self.exitedges = []
+        self.outputspecial = []
         self.retvalname = 'extractedretval'
         self.retvaltype = 'struct extracted_retval'
+        self.exitbool = 'bool_exited_at_loc'
+        self.exitvalue = 'val_exited_at_loc'
 
     def addInput(self, variable):
         self.inputargs.append(variable)
 
     def addOutput(self, variable):
         self.outputargs.append(variable)
+
+    def addExit(self, exit):
+        self.exitedges.append(exit)
 
     def gettype(self):
         if len(self.outputargs) == 0:
@@ -124,8 +131,36 @@ class Function:
         out = 'struct ' + self.retvalname + ' {\n'
         for var in self.outputargs:
             out = out + '%s%s;\n' % (var.gettype(), var.getname())
+        for var in self.outputspecial:
+            out = out + 'char %s_%s;\n' % (self.exitbool, var[0])
+            out = out + 'todo %s_%s;\n' % (self.exitvalue, var[0]) 
+            #FIXME we need original funcs return type!
         out = out + '};\n'
         return out
+
+    # Have to examine exiting locations of the region. 
+    # If region contains return statements, we will need to return original function too. 
+    # Same idea with gotos.
+    # In case if region contains return statement, we remove it, add a boolean into retval structure, 
+    # also save variable returned in said structure, and check whether or not the boolean value 
+    # is set in the parent function. 
+    def analyzeExitEdges(self, regionloc):
+        for exit in self.exitedges:
+            temp = regionloc[exit]
+            temp = temp.lstrip(' \t')
+            temp = temp.rstrip('\n;  ')
+
+            # looking for return statement
+            idx = temp.find('return') # yeah this totally cannot break... at all. I said so
+            if idx != -1:  
+                retval = temp[(idx+len('return')):]
+                self.outputspecial.append((exit, 'return', retval)) 
+                # replace return statement with structure 
+                out = '%s.%s_%s = 1; \n' % (self.retvalname, self.exitbool, exit)
+                out = out + '%s.%s_%s = %s;\n' % (self.retvalname, self.exitvalue, exit, retval)
+                out = out + 'return %s;\n' % (self.retvalname)
+                regionloc[exit] = out
+
 
 
 #GLOBALS 
@@ -134,7 +169,6 @@ funinfo = None
 regloc = {}
 funloc = {} 
 func = Function() 
-regedges = []
 
 # dereferences function inputs. The problem with this approach is that C permits two variables
 # have the same name in two overlapping scopes, causing variable shadowing.. 
@@ -186,6 +220,8 @@ def parseLLVMData():
                 func.addOutput(variable)
             else:
                 func.addInput(variable)
+        if (child.tag == 'regionexit'):
+            func.addExit(int(child.text))
 
 def parseSrcFile():
     f = open(sys.argv[2])
@@ -207,8 +243,7 @@ def extract():
     # return statement or goto statement there. 
     ## for now, i am disregarding those things and assuming that extracted region does not have any 
     ## outputs and does not have any return / goto statements 
-
-
+    func.analyzeExitEdges(regloc)
 
     ## dereference arguments in function body
     for (linenum, line) in regloc.items():
