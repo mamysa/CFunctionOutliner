@@ -37,7 +37,7 @@ namespace {
 	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
 	static bool declaredInRegion(Value *, const RegionLoc&);
 	static bool isArgument(Value *);
-	static DenseSet<int> 
+	static DenseSet<int> regionGetExitingLocs(Region *R);
 
 
 	// various XML helper functions as we are saving all the extracted info
@@ -77,7 +77,6 @@ namespace {
 		return std::pair<unsigned,unsigned>(min, max);
 	}
 
-
 	static RegionLoc getFunctionLoc(const Function *F) {
 		if ( !F->hasMetadata() || !isa<DISubprogram>(F->getMetadata(0)) ) { 
 			errs() << "bad debug meta\n";
@@ -100,6 +99,28 @@ namespace {
 		return RegionLoc(min, max); 
 	}
 
+
+	// we need line numbers exiting basic blocks to determine what kind of 
+	// branching we have there. In case if those lines of code contain goto/return,
+	// we have to do some extra work...
+	static DenseSet<int> regionGetExitingLocs(Region *R) {
+		DenseSet<int> out;
+		for (BasicBlock *BB : R->blocks())
+		for (auto succIt = succ_begin(BB); succIt != succ_end(BB); ++succIt) {
+			if (!R->contains(*succIt)) {
+				// need to iterate over each instruction in each basic block 
+				// as terminator instruction does not always have debug metadata.
+				unsigned max = std::numeric_limits<unsigned>::min();
+				for (Instruction& I: BB->getInstList()) { 
+					const DebugLoc& x = I.getDebugLoc();
+					if (x) { max = std::max(max, x.getLine()); }
+				}
+				out.insert(max);
+			}
+		}
+
+		return out;
+	}
 	
 	static void readBBListFile(StringMap<DenseSet<StringRef>>& F, 
 										  const std::string filename) {
@@ -271,13 +292,9 @@ namespace {
 				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
 					Instruction *userinstr = cast<Instruction>(*userit);	
 					BasicBlock *parentBB = userinstr->getParent(); 
-					if (isa<MemCpyInst>(I) && successors.find(parentBB) != successors.end()) {
-						if (declaredInRegion(instr, regionBounds)) 
+					if (successors.find(parentBB) != successors.end()) {
+						if (declaredInRegion(instr, regionBounds) && !isArgument(instr)) 
 						outputargs.insert(instr);
-					}
-					if (isa<StoreInst>(I) && successors.find(parentBB) != successors.end()) {
-						if (declaredInRegion(instr, regionBounds)) 
-							outputargs.insert(instr); 
 					}
 				}
 			}
@@ -414,6 +431,8 @@ retlabel:
 			Function *F = R->getEntry()->getParent();
 			std::pair<unsigned,unsigned> regionBounds = getRegionLoc(R);
 			RegionLoc functionBounds = getFunctionLoc(F);
+			DenseSet<int> regionExit = regionGetExitingLocs(R);
+			for (int i: regionExit) { errs() << i << "\n"; }
 
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
@@ -422,18 +441,18 @@ retlabel:
 			DenseSet<BasicBlock *> successors = DFSBasicBlocks(b, pushSuccessors);
 			removeOwnBlocks(successors, R);
 
-
 			DenseSet<Value *> inputargs;
 			DenseSet<Value *> outputargs;
-
-
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				if (!isa<StoreInst>(I) && !isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
+				if (!isa<AllocaInst>(I) && !isa<StoreInst>(I) && 
+					!isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
 				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds);
 			}
 
+			for (Value *V: inputargs) { V->dump(); }
+			for (Value *V: outputargs) { V->dump(); }
 			std::ofstream outfile;
 			outfile.open("extractinfo.txt", std::ofstream::out);
 			//writing stuff in xml-like format
