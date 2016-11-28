@@ -63,6 +63,7 @@ class Function:
     def __init__(self):
         self.inputargs = [] 
         self.outputargs = [] 
+        self.retvalname = 'extracted_retval';
 
     def addInput(self, variable):
         self.inputargs.append(variable)
@@ -73,7 +74,7 @@ class Function:
     def gettype(self):
         if len(self.outputargs) == 0:
             return 'void'
-        return 'todo'
+        return 'struct ' + self.retvalname;
 
     def getFnDecl(self):
         args = ''
@@ -88,7 +89,24 @@ class Function:
         for variable in self.inputargs:
             args = args + '&' + variable.getname() + ', '
         args = args.rstrip(', ')
-        return 'extracted(%s);' % (args) ##TODO retvals
+        return 'extracted(%s);\n' % (args) ##TODO retvals
+
+    #if extracted function returns something, we have to declare these variables 
+    # in the original function and assign correct return values.
+    def restoreReturnedValues(self): 
+        out = ''
+        for var in self.outputargs:
+            st = '%s%s = %s.%s;\n' % (var.gettype(), var.getname(), self.retvalname, var.getname())
+            out = out + st
+        return out
+
+    def getReturnTypeDefinition(self):
+        out = 'struct ' + self.retvalname + ' {\n'
+        for var in self.outputargs:
+            out = out + '%s%s;\n' % (var.gettype(), var.getname())
+        out = out + '};\n'
+        return out
+
 
 #GLOBALS 
 reginfo = None
@@ -173,23 +191,23 @@ def extract():
 
 
     ## dereference arguments in function body
-    variables = func.inputargs + func.outputargs;
     for (linenum, line) in regloc.items():
-        for variable in variables:
+        for variable in func.inputargs:
             line = findIdentifier(line, variable)
         regloc[linenum] = line
         
     #TODO copy everything from original file before given function and after 
+    sys.stdout.write(func.getReturnTypeDefinition())
     sys.stdout.write(func.getFnDecl())
     for line in regloc.values():
         sys.stdout.write(line)
     sys.stdout.write('}\n')
 
-    #print('\n')
     # write original function
     for i in range(funinfo.start, reginfo.start):
         sys.stdout.write(funloc[i])
-    sys.stdout.write(func.getFnCall())
+    sys.stdout.write(func.getFnCall())  
+    sys.stdout.write(func.restoreReturnedValues()) ## if function is not void, restore all variables
     for i in range(reginfo.end + 1, funinfo.end + 1):
         sys.stdout.write(funloc[i])
     sys.stdout.write('}\n')
