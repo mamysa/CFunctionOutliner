@@ -39,7 +39,6 @@ namespace {
 
 	static RegionLoc getRegionLoc(const Region *);
 	static RegionLoc getFunctionLoc(const Function *);
-	static void getVariableDebugInfo(Function *, DenseMap<Value *, DILocalVariable *>&);
 	static bool declaredInRegion(Value *, const RegionLoc&);
 	static bool isArgument(Value *);
 	static DenseSet<int> regionGetExitingLocs(Region *R);
@@ -185,15 +184,6 @@ namespace {
 		return (numblocks == (int)blocks.size());
 	}
 
-	// returns true if region's first basic block is also a first basic block of a function 
-	static bool includesEntryBasicBlock(const Region *R) {
-		Function *F = R->getEntry()->getParent();
-		const BasicBlock *a = &F->getEntryBlock();
-		const BasicBlock *b =  R->getEntry();
-		return (a == b);
-	}
-
-
 	static DenseSet<Value *> DFSInstruction(Value *I) {
 		DenseSet<Value *> visited; 
 
@@ -206,29 +196,29 @@ namespace {
 			if (visited.find(current) != visited.end()) { continue; }
 			visited.insert(current);
 
-			if (Instruction *instr = dyn_cast<Instruction>(current)) {
-				for (auto it = instr->op_begin(); it != instr->op_end(); ++it) {
-					if (auto instr = dyn_cast<Instruction>(*it)) {
-						stack.push_back(instr);	
-					}
-					if (auto argument = dyn_cast<Argument>(*it)) {
-						stack.push_back(argument);
-					}
+			if (ConstantExpr *constexp = dyn_cast<ConstantExpr>(current)) {
+				for (auto it = constexp->op_begin(); it != constexp->op_end(); ++it) {
+					if (auto globl = dyn_cast<GlobalVariable>(*it)) { stack.push_back(globl); }
 				}
 			}
 
+			if (Instruction *instr = dyn_cast<Instruction>(current)) {
+				for (auto it = instr->op_begin(); it != instr->op_end(); ++it) {
+					if (auto globl    = dyn_cast<GlobalVariable>(*it)) { stack.push_back(globl);    }
+					if (auto instr    = dyn_cast<Instruction>(*it))    { stack.push_back(instr);    }
+					if (auto constexp = dyn_cast<ConstantExpr>(*it))   { stack.push_back(constexp); }
+				}
+			}
 		}
 
-		for (Value *inst: visited) {
-			if (!isa<AllocaInst>(inst) && !isa<Argument>(inst)) { visited.erase(inst); }
+		// we are only interested in alloca instructions, remove everything else...
+		for (Value *val: visited) {
+			if (!isa<AllocaInst>(val) && !isa<GlobalVariable>(val)) { visited.erase(val); }
 		}
 
 		return visited;
 	}
 
-
-
-	
 	//helper methods + DFS routine for finding all reachable blocks starting at some 
 	//basic block BB. 
 	typedef void (EnqueueBlockFunc)(std::deque<BasicBlock *>&, BasicBlock *);
@@ -271,7 +261,8 @@ namespace {
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs,
-								const std::pair<unsigned,unsigned>& regionBounds) {
+								const std::pair<unsigned,unsigned>& regionBounds,
+								const RegionLoc& functionBounds) {
 		static DenseSet<Value *> analyzed; 
 		DenseSet<Value *> sources = DFSInstruction(I);	
 		for (auto it = sources.begin(); it != sources.end(); ++it) {
@@ -303,6 +294,26 @@ namespace {
 					if (successors.find(parentBB) != successors.end()) {
 						if (declaredInRegion(instr, regionBounds) && !isArgument(instr)) 
 						outputargs.insert(instr);
+					}
+				}
+			}
+
+			// constants defined in functions such as structs/arrays are declared in the global scope now. 
+			if (auto globl = dyn_cast<GlobalVariable>(*it)) {
+				SmallVector<DIGlobalVariable *, 1> DI;
+				globl->getDebugInfo(DI);
+				for (DIGlobalVariable *d: DI) {
+					// if the global is defined in the function but not in the region, then it is an input 
+					// argument. If it is defined in region, it is also an output argument.
+					if (functionBounds.first <= d->getLine() && d->getLine() <= functionBounds.second) {
+						if(!(regionBounds.first <= d->getLine() && d->getLine() <= regionBounds.second)) {
+							inputargs.insert(globl);	
+						}
+
+
+						if(regionBounds.first <= d->getLine() && d->getLine() <= regionBounds.second) {
+							outputargs.insert(globl);
+						}
 					}
 				}
 			}
@@ -392,6 +403,7 @@ ret:
 		out << XMLElement("type", getTypeString(cast<DIType>(LV->getRawType())), 2);
 		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
 		out << XMLClosingTag("variable", 1);
+		errs() << getTypeString(cast<DIType>(LV->getRawType())) << "\n"; //#TODO REMOVE ME LATER
 		return;
 
 missing_debuginfo:
@@ -436,8 +448,8 @@ missing_debuginfo:
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
 				if (!isa<AllocaInst>(I) && !isa<StoreInst>(I) && 
-					!isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
-				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds);
+				!isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
+				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, functionBounds);
 			}
 
 			std::ofstream outfile;
