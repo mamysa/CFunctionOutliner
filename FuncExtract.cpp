@@ -377,111 +377,26 @@ ret:
 		return typestr; 
 	}
 	
-	static std::pair<DIType *, int>  getBaseType(DIType *T) {
-		int ptrcount = 0;
-		Metadata *md = T;	
+	static void writeVariableInfo(Value *V, bool isOutputVar, std::ofstream& out) {
+		DbgDeclareInst *DDI = nullptr;
+		DILocalVariable *LV = nullptr;
 
-restart:
-		if (isa<DIBasicType>(md)) { 
-			goto retlabel; 
-		}
+		DDI = FindAllocaDbgDeclare(V);
+		if (!DDI) { goto missing_debuginfo; }
 
-		// have to look for more concrete type if we are dealing with arrays.
-		if (auto *a = dyn_cast<DICompositeType>(md)) { 
-			switch (a->getTag()) {
-			case dwarf::DW_TAG_array_type:
-				md = a->getBaseType(); ptrcount++;	
-				goto restart;
-			default:
-				goto retlabel;
-			}
-		}
-
-		// have to look for more concrete type if we are dealing with pointers.
-		if (auto *a = dyn_cast<DIDerivedType>(md)) {
-			switch (a->getTag()) {
-			case dwarf::DW_TAG_pointer_type:
-				md = a->getBaseType(); ptrcount++;	
-				goto restart;
-			default:
-				goto retlabel;
-			}
-		}
-
-retlabel:
-		return std::pair<DIType *, int>(cast<DIType>(md), ptrcount);
-	}
-
-	static void writeVariableInfo(Value *V, bool isOutputVar) {
-		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
-		if (!DDI) {
-			errs() << "Missing debug info, skipping: \n"; V->dump();
-			return;
-		}
-
-		DILocalVariable *LV = DDI->getVariable();
-		if (!LV) {
-			errs() << "Missing debug info, skipping: \n"; V->dump();
-			return;
-		}
-
-		std::string typestr = getTypeString(cast<DIType>(LV->getRawType()));
-		errs() << typestr << "\n";
-
-	}
-
-	static void writeValueInfo(Value *V, bool isOutputVar, std::ofstream& out) {
-		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
-
-		// only happens when variable does not exist in original source code. It is fine 
-		// as long as it happens only to %retval or equivalent. 
-		if (!DDI) {
-			errs() << "Missing debug info, skipping: \n"; V->dump();
-			return;
-		}
-
-		DILocalVariable *LV = DDI->getVariable();
-		if (!LV) {
-			errs() << "Missing debug info, skipping: \n"; V->dump();
-			return;
-		}
-
-		DIType *T = dyn_cast<DIType>(LV->getRawType());
+		LV = DDI->getVariable();
+		if (!LV)  { goto missing_debuginfo; }
 
 		out << XMLOpeningTag("variable", 1);
-		if (isOutputVar) { out << XMLElement("isoutput", true, 3); }
-
-		// this isn't supposed to happen.
-		if (!T) { out << XMLElement("type", "unknown", 2); }
-
-		auto TT = getBaseType(T);
 		out << XMLElement("name", LV->getName().str(), 2);
-		out << XMLElement("ptrl", TT.second, 2);
-
-
-		if (auto *a = dyn_cast<DIBasicType>(TT.first)) {
-			out << XMLElement("type", a->getName().str(), 2);
-		}
-
-		if (auto *a = dyn_cast<DICompositeType>(TT.first)) {
-			if (a->getTag() == dwarf::DW_TAG_structure_type) { 
-				std::stringstream stream; 
-				stream << "struct " << a->getName().str();
-				out << XMLElement("type", stream.str(), 2);
-			}
-
-			if (a->getTag() == dwarf::DW_TAG_array_type) {
-				out << XMLElement("type", a->getName().str(), 2);
-			}
-		}
-
-		if (auto *a = dyn_cast<DIDerivedType>(TT.first)) {
-			if (a->getTag() == dwarf::DW_TAG_typedef) { 
-				out << XMLElement("type", a->getName().str(), 2);
-			}
-		}
-
+		out << XMLElement("type", getTypeString(cast<DIType>(LV->getRawType())), 2);
+		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
 		out << XMLClosingTag("variable", 1);
+		return;
+
+missing_debuginfo:
+		errs() << "Missing debug info, skipping: \n"; 
+		V->dump();
 	}
 
 	static void writeLocInfo(RegionLoc& loc, const char *tag, std::ofstream& out) {
@@ -534,11 +449,10 @@ retlabel:
 			writeLocInfo(functionBounds, "function", outfile);
 
 			// dump variable info...
-			for (Value *V : inputargs)  { writeValueInfo(V, false, outfile); }
-			for (Value *V : inputargs)  { writeVariableInfo(V, false); }
-			//outfile.close();
-			//return false;
-			for (Value *V : outputargs) { writeValueInfo(V, true,  outfile); }
+			for (Value *V : inputargs)  { writeVariableInfo(V, false, outfile); }
+			for (Value *V : outputargs) { writeVariableInfo(V, true,  outfile); }
+
+			// dump region exit locs
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
 
 			outfile << XMLClosingTag("extractinfo", 0);
