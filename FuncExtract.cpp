@@ -38,7 +38,8 @@ namespace {
 
 	static AreaLoc getRegionLoc(const Region *);
 	static AreaLoc getFunctionLoc(const Function *);
-	static bool declaredInRegion(Value *, const AreaLoc&);
+	static Metadata * getMetadata(Value *);
+	static bool declaredInArea(Metadata *, const AreaLoc&);
 	static bool isArgument(Value *);
 	static DenseSet<int> regionGetExitingLocs(Region *R);
 
@@ -126,6 +127,23 @@ namespace {
 		}
 
 		return out;
+	}
+
+	// wrapper method for conveniently getting values metadata.
+	// returns nullptr if metadata is not found. 
+	static Metadata * getMetadata(Value *V) {
+		if (auto *a = dyn_cast<AllocaInst>(V)) {
+			DbgDeclareInst *DDI = FindAllocaDbgDeclare(a);
+			if (DDI) { return DDI->getVariable(); }
+		}
+
+		if (auto *a = dyn_cast<GlobalVariable>(V)) {
+			SmallVector<DIGlobalVariable *, 1> sm;
+			a->getDebugInfo(sm);	
+			return sm[0];
+		}
+
+		return nullptr;
 	}
 	
 	static void readBBListFile(StringMap<DenseSet<StringRef>>& F, 
@@ -269,6 +287,13 @@ namespace {
 			if (analyzed.find(*it) != analyzed.end()) { continue; }
 			analyzed.insert(*it);
 
+			Metadata *M = getMetadata(*it);
+			if (!M) {
+				errs() << "Missing debug info for:\n";
+				(*it)->dump();
+				continue;
+			}
+
 			if (auto instr = dyn_cast<AllocaInst>(*it)) {
 				// when compiled with -O0 flag, all function arguments are copied onto the stack
 				// and debug info of corresponding alloca instructions tells us whether or not 
@@ -282,8 +307,9 @@ namespace {
 				// is actually used (stored into, etc), if we did that would cause problems 
 				// for stack-allocated arrays as those can be uninitialized.
 				if (predecessors.find(instr->getParent()) != predecessors.end()) {
-					if (!declaredInRegion(instr, regionBounds)) 
+					if (!declaredInArea(M, regionBounds)) {
 						inputargs.insert(instr);
+					}
 				} 
 				// if instruction is used by some instruction is successor basic block, we add 
 				// it to the output argument list only if I is store, i.e. we modify it. 
@@ -291,41 +317,33 @@ namespace {
 					Instruction *userinstr = cast<Instruction>(*userit);	
 					BasicBlock *parentBB = userinstr->getParent(); 
 					if (successors.find(parentBB) != successors.end()) {
-						if (declaredInRegion(instr, regionBounds) && !isArgument(instr)) 
-						outputargs.insert(instr);
+						if (declaredInArea(M, regionBounds) && !isArgument(instr)) {
+							outputargs.insert(instr);
+						}
 					}
 				}
 			}
 
 			// constants defined in functions such as structs/arrays are declared in the global scope now. 
 			if (auto globl = dyn_cast<GlobalVariable>(*it)) {
-				SmallVector<DIGlobalVariable *, 1> DI;
-				globl->getDebugInfo(DI);
-				for (DIGlobalVariable *d: DI) {
-					// if the global is defined in the function but not in the region, then it is an input 
-					// argument. If it is defined in region, it is also an output argument.
-					if (functionBounds.first <= d->getLine() && d->getLine() <= functionBounds.second) {
-						if(!(regionBounds.first <= d->getLine() && d->getLine() <= regionBounds.second)) {
-							inputargs.insert(globl);	
-						}
-
-
-						if(regionBounds.first <= d->getLine() && d->getLine() <= regionBounds.second) {
-							outputargs.insert(globl);
-						}
-					}
+				// if the global is defined in the function but not in the region, then it is an input 
+				// argument. If it is defined in region, it is also an output argument.
+				if (declaredInArea(M, functionBounds)) {
+					if (!declaredInArea(M, regionBounds)) { inputargs.insert(globl);  }
+					if ( declaredInArea(M, regionBounds)) { outputargs.insert(globl); }
 				}
 			}
 		}
 	}
 
-	// determines if given variable (alloca) is declared in the region by making use
-	// of line numbers provided by debug metadata.
-	static bool declaredInRegion(Value *V, const AreaLoc& regionBounds) {
-		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
-		if (!DDI) { return false; }
-		DILocalVariable *DLV = DDI->getVariable();
-		return (regionBounds.first <= DLV->getLine() && DLV->getLine() <= regionBounds.second);
+
+	// compares M's line parameter to AreaLoc, returns true if number is between.
+	static bool declaredInArea(Metadata *M, const AreaLoc& A) {
+		unsigned linenum = std::numeric_limits<unsigned>::max();
+		if (auto *a = dyn_cast<DIGlobalVariable>(M)) { linenum = a->getLine(); }
+		if (auto *a  = dyn_cast<DILocalVariable>(M)) { linenum = a->getLine(); }
+		if (linenum == std::numeric_limits<unsigned>::max()) { return false; }
+		return (A.first <= linenum && linenum <= A.second);
 	}
 
 	// debug info also tells us if given alloca istruction is used for storing function
@@ -388,26 +406,13 @@ ret:
 	}
 	
 	static void writeVariableInfo(Value *V, bool isOutputVar, std::ofstream& out) {
-		DbgDeclareInst *DDI = nullptr;
-		DILocalVariable *LV = nullptr;
-
-		DDI = FindAllocaDbgDeclare(V);
-		if (!DDI) { goto missing_debuginfo; }
-
-		LV = DDI->getVariable();
-		if (!LV)  { goto missing_debuginfo; }
-
+		DIVariable *DI = cast<DIVariable>(getMetadata(V));
 		out << XMLOpeningTag("variable", 1);
-		out << XMLElement("name", LV->getName().str(), 2);
-		out << XMLElement("type", getTypeString(cast<DIType>(LV->getRawType())), 2);
+		out << XMLElement("name", DI->getName().str(), 2);
+		out << XMLElement("type", getTypeString(cast<DIType>(DI->getRawType())), 2);
 		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
 		out << XMLClosingTag("variable", 1);
-		errs() << getTypeString(cast<DIType>(LV->getRawType())) << "\n"; //#TODO REMOVE ME LATER
-		return;
-
-missing_debuginfo:
-		errs() << "Missing debug info, skipping: \n"; 
-		V->dump();
+		errs() << getTypeString(cast<DIType>(DI->getRawType())) << "\n"; //#TODO REMOVE ME LATER
 	}
 
 	static void writeLocInfo(AreaLoc& loc, const char *tag, std::ofstream& out) {
