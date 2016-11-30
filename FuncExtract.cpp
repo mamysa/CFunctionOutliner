@@ -34,12 +34,11 @@ static cl::opt<std::string> OutXMLFilename("out",
 
 namespace {
 
-	typedef std::pair<unsigned,unsigned> RegionLoc;
-	typedef DenseMap<Value *, DILocalVariable *> VariableDbgInfo;
+	typedef std::pair<unsigned,unsigned> AreaLoc;
 
-	static RegionLoc getRegionLoc(const Region *);
-	static RegionLoc getFunctionLoc(const Function *);
-	static bool declaredInRegion(Value *, const RegionLoc&);
+	static AreaLoc getRegionLoc(const Region *);
+	static AreaLoc getFunctionLoc(const Function *);
+	static bool declaredInRegion(Value *, const AreaLoc&);
 	static bool isArgument(Value *);
 	static DenseSet<int> regionGetExitingLocs(Region *R);
 
@@ -68,7 +67,7 @@ namespace {
 		return stream.str();
 	}
 
-	static std::pair<unsigned,unsigned> getRegionLoc(const Region *R) {
+	static AreaLoc getRegionLoc(const Region *R) {
 		unsigned min = std::numeric_limits<unsigned>::max();
 		unsigned max = std::numeric_limits<unsigned>::min();
 		
@@ -84,10 +83,10 @@ namespace {
 		return std::pair<unsigned,unsigned>(min, max);
 	}
 
-	static RegionLoc getFunctionLoc(const Function *F) {
+	static AreaLoc getFunctionLoc(const Function *F) {
 		if ( !F->hasMetadata() || !isa<DISubprogram>(F->getMetadata(0)) ) { 
 			errs() << "bad debug meta\n";
-			return RegionLoc(-1, -1); 
+			return AreaLoc(-1, -1); 
 		}
 
 		Metadata *M = F->getMetadata(0);
@@ -103,7 +102,7 @@ namespace {
 			}
 		}
 			
-		return RegionLoc(min, max); 
+		return AreaLoc(min, max); 
 	}
 
 
@@ -261,8 +260,8 @@ namespace {
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs,
-								const std::pair<unsigned,unsigned>& regionBounds,
-								const RegionLoc& functionBounds) {
+								const AreaLoc& regionBounds,
+								const AreaLoc& functionBounds) {
 		static DenseSet<Value *> analyzed; 
 		DenseSet<Value *> sources = DFSInstruction(I);	
 		for (auto it = sources.begin(); it != sources.end(); ++it) {
@@ -322,7 +321,7 @@ namespace {
 
 	// determines if given variable (alloca) is declared in the region by making use
 	// of line numbers provided by debug metadata.
-	static bool declaredInRegion(Value *V, const RegionLoc& regionBounds) {
+	static bool declaredInRegion(Value *V, const AreaLoc& regionBounds) {
 		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
 		if (!DDI) { return false; }
 		DILocalVariable *DLV = DDI->getVariable();
@@ -411,7 +410,7 @@ missing_debuginfo:
 		V->dump();
 	}
 
-	static void writeLocInfo(RegionLoc& loc, const char *tag, std::ofstream& out) {
+	static void writeLocInfo(AreaLoc& loc, const char *tag, std::ofstream& out) {
 		out << XMLOpeningTag(tag, 1); 
 		out << XMLElement("start", loc.first, 2);
 		out << XMLElement("end",  loc.second, 2);
@@ -430,8 +429,8 @@ missing_debuginfo:
 			
 
 			Function *F = R->getEntry()->getParent();
-			std::pair<unsigned,unsigned> regionBounds = getRegionLoc(R);
-			RegionLoc functionBounds = getFunctionLoc(F);
+			AreaLoc regionBounds = getRegionLoc(R);
+			AreaLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
 			
 
