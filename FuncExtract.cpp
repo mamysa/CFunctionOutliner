@@ -18,6 +18,7 @@
 #include <deque>
 #include <string>
 #include <limits>
+#include <algorithm>
 
 
 
@@ -25,6 +26,10 @@ using namespace llvm;
 
 static cl::opt<std::string> BBListFilename("bblist", 
 	   		cl::desc("List of blocks' labels that are to be extracted. Must form a valid region."), 
+	   		cl::value_desc("filename"), cl::Required  );
+
+static cl::opt<std::string> OutXMLFilename("out", 
+	   		cl::desc("Name of the file to info to."), 
 	   		cl::value_desc("filename"), cl::Required  );
 
 namespace {
@@ -42,21 +47,24 @@ namespace {
 
 	// various XML helper functions as we are saving all the extracted info
 	// in XML-like format. Better than self-improvised markup.  
-	static std::string XMLOpeningTag(const char *key) {
+	static std::string XMLOpeningTag(const char *key, int numtabs) {
 		std::stringstream stream;
+		for (int i = 0; i < numtabs; i++) { stream << '\t'; }
 		stream << "<" << key << ">" << std::endl;
 		return stream.str();
 	}
 
-	static std::string XMLClosingTag(const char *key) {
+	static std::string XMLClosingTag(const char *key, int numtabs) {
 		std::stringstream stream;
+		for (int i = 0; i < numtabs; i++) { stream << '\t'; }
 		stream << "</" << key << ">" << std::endl;
 		return stream.str();
 	}
 
 	template <typename T>
-	static std::string XMLElement(const char *key, T value) {
+	static std::string XMLElement(const char *key, T value, int numtabs) {
 		std::stringstream stream;
+		for (int i = 0; i < numtabs; i++) { stream << '\t'; }
 		stream << "<" << key << ">" << value << "</" << key << ">" << std::endl;
 		return stream.str();
 	}
@@ -109,7 +117,7 @@ namespace {
 		for (auto succIt = succ_begin(BB); succIt != succ_end(BB); ++succIt) {
 			if (!R->contains(*succIt)) {
 				// need to iterate over each instruction in each basic block 
-				// as terminator instruction does not always have debug metadata.
+				// as terminator instruction does not always have debug metadata...
 				unsigned max = std::numeric_limits<unsigned>::min();
 				for (Instruction& I: BB->getInstList()) { 
 					const DebugLoc& x = I.getDebugLoc();
@@ -319,7 +327,56 @@ namespace {
 		return (DLV->getArg() != 0);
 	}
 
-	// finds the time we can use by traversing pointers...
+	// extracts the type of the provided debuginfo type as a string. Follows the pointers 
+	// as necessary.
+	static std::string getTypeString(DIType *T) {
+		std::vector<unsigned> tags;
+
+		Metadata *md = cast<Metadata>(T);
+		
+		while (true) {
+			// do not need to look for anymore.
+			if (isa<DIBasicType>(md)) { break; }
+
+			// we are interested in array type. 
+			if (auto a = dyn_cast<DICompositeType>(md)) {
+				if (a->getTag() == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
+				if (a->getTag() == dwarf::DW_TAG_structure_type) { tags.push_back(a->getTag()); }
+				Metadata *next = a->getBaseType();
+				if (next == nullptr)  { goto ret; } // no basetype property here, bailing
+				md = next; 
+				continue;
+			}
+
+			if (auto a = dyn_cast<DIDerivedType>(md)) {
+				if (a->getTag() == dwarf::DW_TAG_pointer_type) { tags.push_back(a->getTag()); }
+				if (a->getTag() == dwarf::DW_TAG_const_type  ) { tags.push_back(a->getTag()); }
+				if (a->getTag() == dwarf::DW_TAG_typedef     ) { tags.push_back(a->getTag()); break; }
+				Metadata *next = a->getBaseType();
+				if (next == nullptr)  { goto ret; } // no basetype property here, bailing
+				md = next;
+			}
+		}
+
+ret:
+		DIType *type = cast<DIType>(md);
+		std::reverse(tags.begin(), tags.end());  
+
+		std::string typestr;
+		typestr += type->getName().str() + " ";
+
+		for (unsigned& t: tags) {
+			switch (t) {
+				case dwarf::DW_TAG_pointer_type:   { typestr += "*"; 			    break; }
+				case dwarf::DW_TAG_structure_type: { typestr = "struct " + typestr; break; }
+				case dwarf::DW_TAG_typedef:        { 							  ; break; }
+				case dwarf::DW_TAG_const_type:     { typestr += "const";            break; }
+			}
+		}
+
+		return typestr; 
+	}
+	
 	static std::pair<DIType *, int>  getBaseType(DIType *T) {
 		int ptrcount = 0;
 		Metadata *md = T;	
@@ -355,6 +412,23 @@ retlabel:
 		return std::pair<DIType *, int>(cast<DIType>(md), ptrcount);
 	}
 
+	static void writeVariableInfo(Value *V, bool isOutputVar) {
+		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
+		if (!DDI) {
+			errs() << "Missing debug info, skipping: \n"; V->dump();
+			return;
+		}
+
+		DILocalVariable *LV = DDI->getVariable();
+		if (!LV) {
+			errs() << "Missing debug info, skipping: \n"; V->dump();
+			return;
+		}
+
+		std::string typestr = getTypeString(cast<DIType>(LV->getRawType()));
+		errs() << typestr << "\n";
+
+	}
 
 	static void writeValueInfo(Value *V, bool isOutputVar, std::ofstream& out) {
 		DbgDeclareInst *DDI = FindAllocaDbgDeclare(V);
@@ -374,47 +448,47 @@ retlabel:
 
 		DIType *T = dyn_cast<DIType>(LV->getRawType());
 
-		out << XMLOpeningTag("variable");
-		if (isOutputVar) { out << XMLElement("isoutput", true); }
+		out << XMLOpeningTag("variable", 1);
+		if (isOutputVar) { out << XMLElement("isoutput", true, 3); }
 
 		// this isn't supposed to happen.
-		if (!T) { out << XMLElement("type", "unknown"); }
+		if (!T) { out << XMLElement("type", "unknown", 2); }
 
 		auto TT = getBaseType(T);
-		out << XMLElement("name", LV->getName().str());
-		out << XMLElement("ptrl", TT.second);
+		out << XMLElement("name", LV->getName().str(), 2);
+		out << XMLElement("ptrl", TT.second, 2);
 
 
 		if (auto *a = dyn_cast<DIBasicType>(TT.first)) {
-			out << XMLElement("type", a->getName().str());
+			out << XMLElement("type", a->getName().str(), 2);
 		}
 
 		if (auto *a = dyn_cast<DICompositeType>(TT.first)) {
 			if (a->getTag() == dwarf::DW_TAG_structure_type) { 
 				std::stringstream stream; 
 				stream << "struct " << a->getName().str();
-				out << XMLElement("type", stream.str());
+				out << XMLElement("type", stream.str(), 2);
 			}
 
 			if (a->getTag() == dwarf::DW_TAG_array_type) {
-				out << XMLElement("type", a->getName().str());
+				out << XMLElement("type", a->getName().str(), 2);
 			}
 		}
 
 		if (auto *a = dyn_cast<DIDerivedType>(TT.first)) {
 			if (a->getTag() == dwarf::DW_TAG_typedef) { 
-				out << XMLElement("type", a->getName().str());
+				out << XMLElement("type", a->getName().str(), 2);
 			}
 		}
 
-		out << XMLClosingTag("variable");
+		out << XMLClosingTag("variable", 1);
 	}
 
 	static void writeLocInfo(RegionLoc& loc, const char *tag, std::ofstream& out) {
-		out << XMLOpeningTag(tag); 
-		out << XMLElement("start", loc.first);
-		out << XMLElement("end",   loc.second);
-		out << XMLClosingTag(tag); 
+		out << XMLOpeningTag(tag, 1); 
+		out << XMLElement("start", loc.first, 2);
+		out << XMLElement("end",  loc.second, 2);
+		out << XMLClosingTag(tag, 1); 
 	}
 										 
 	struct FuncExtract : public RegionPass {
@@ -432,7 +506,7 @@ retlabel:
 			std::pair<unsigned,unsigned> regionBounds = getRegionLoc(R);
 			RegionLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
-			for (int i: regionExit) { errs() << i << "\n"; }
+			
 
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
@@ -451,21 +525,28 @@ retlabel:
 				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds);
 			}
 
-			for (Value *V: inputargs) { V->dump(); }
-			for (Value *V: outputargs) { V->dump(); }
 			std::ofstream outfile;
-			outfile.open("extractinfo.txt", std::ofstream::out);
+			outfile.open(OutXMLFilename, std::ofstream::out);
 			//writing stuff in xml-like format
-			outfile << XMLOpeningTag("extractinfo");
+			outfile << XMLOpeningTag("extractinfo", 0);
 			//writeFileInfo(regionBounds, functionBounds, outfile);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
 
 			// dump variable info...
 			for (Value *V : inputargs)  { writeValueInfo(V, false, outfile); }
+			for (Value *V : inputargs)  { writeVariableInfo(V, false); }
+			//outfile.close();
+			//return false;
 			for (Value *V : outputargs) { writeValueInfo(V, true,  outfile); }
-			outfile << XMLClosingTag("extractinfo");
+			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
+
+			outfile << XMLClosingTag("extractinfo", 0);
 			outfile.close();
+
+			// TODO remove me later!
+			for (Value *V: inputargs) { V->dump(); }
+			for (Value *V: outputargs) { V->dump(); }
 
 			return false;
 		}
@@ -498,7 +579,6 @@ retlabel:
 		~FuncExtract(void) {
 			errs() << "Hello I am your destructor!\n";
 		}
-
 	};
 }
 
