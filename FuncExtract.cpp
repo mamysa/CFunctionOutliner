@@ -366,7 +366,14 @@ namespace {
 		}
 
 		// basic type constants (i.e. int / floats) have to be checked separately.
-		// if there are multiple equal constants, we add all of them.
+		// Every constant that has the same constant value and are used in the region
+		// are added to the input list. You really shouldn't have equal constants defined more than
+		// once, though.
+		// Every costant defined inside the region is added to output list. Might not be
+		// precise enough.
+		// This works fine unless you start casting such constants and you end up having literal 
+		// values that do not have corresponding alloca instruction. So... don't do arbitrary 
+		// casting inside the region.  
 		for (Value *V: I->operand_values()) {
 			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
 			for (const ValuePair& constant: constants) {
