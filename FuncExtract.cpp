@@ -419,14 +419,15 @@ namespace {
 		
 		while (true) {
 			// do not need to look for anymore.
-			if (isa<DIBasicType>(md)) { break; }
+			if (isa<DIBasicType>(md))      { break; }
+			if (isa<DISubroutineType>(md)) { break; }
 
 			// we are interested in array type. 
 			if (auto a = dyn_cast<DICompositeType>(md)) {
 				if (a->getTag() == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
 				if (a->getTag() == dwarf::DW_TAG_structure_type) { tags.push_back(a->getTag()); }
 				Metadata *next = a->getBaseType();
-				if (next == nullptr)  { goto ret; } // no basetype property here, bailing
+				if (next == nullptr)  { break; } // no basetype property here, bailing
 				md = next; 
 				continue;
 			}
@@ -436,24 +437,35 @@ namespace {
 				if (a->getTag() == dwarf::DW_TAG_const_type  ) { tags.push_back(a->getTag()); }
 				if (a->getTag() == dwarf::DW_TAG_typedef     ) { tags.push_back(a->getTag()); break; }
 				Metadata *next = a->getBaseType();
-				if (next == nullptr)  { goto ret; } // no basetype property here, bailing
+				if (next == nullptr)  { break; } // no basetype property here, bailing
 				md = next;
 			}
+
 		}
 
-ret:
 		DIType *type = cast<DIType>(md);
 		std::reverse(tags.begin(), tags.end());  
 
+
+		// for function pointers - call 
+		if (auto *a = dyn_cast<DISubroutineType>(md)) {
+			//const auto& fnptrtype = a->getTypeArray();
+			//Metadata *m = fnptrtype[0];
+			return "function pointer";
+
+		}
+
 		std::string typestr;
-		typestr += type->getName().str() + " ";
+		if (type->getName().size() == 0) { typestr += "void "; }
+		else { typestr += type->getName().str() + " "; }
 
 		for (unsigned& t: tags) {
 			switch (t) {
 				case dwarf::DW_TAG_pointer_type:   { typestr += "*"; 			    break; }
 				case dwarf::DW_TAG_structure_type: { typestr = "struct " + typestr; break; }
 				case dwarf::DW_TAG_typedef:        { 							  ; break; }
-				case dwarf::DW_TAG_const_type:     { typestr += "const";            break; }
+				case dwarf::DW_TAG_const_type:     { typestr += "const ";           break; }
+
 			}
 		}
 
@@ -519,11 +531,13 @@ ret:
 			for (Value *V : inputargs)  { writeVariableInfo(V, false, outfile); }
 			for (Value *V : outputargs) { writeVariableInfo(V, true,  outfile); }
 
+
 			// dump region exit locs
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
 
 			outfile << XMLClosingTag("extractinfo", 0);
 			outfile.close();
+
 
 			// TODO remove me later!
 			for (Value *V: inputargs) { V->dump(); }
