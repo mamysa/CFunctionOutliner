@@ -372,6 +372,12 @@ namespace {
 			for (const ValuePair& constant: constants) {
 				if (constant.first == V) {
 					Metadata *M = getMetadata(constant.second); // get alloca instruction info;
+					if (!M) {
+						errs() << "Missing metadata, skipping:\n";
+						constant.second->dump(); 
+						continue;
+					}
+
 					if (!declaredInArea(M, regionBounds)) {  inputargs.insert(constant.second); }
 					if ( declaredInArea(M, regionBounds)) { outputargs.insert(constant.second); }
 				}
