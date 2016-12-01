@@ -412,11 +412,10 @@ namespace {
 
 	// extracts the type of the provided debuginfo type as a string. Follows the pointers 
 	// as necessary.
-	static std::string getTypeString(DIType *T) {
+	static std::string getTypeString(DIType *T, StringRef variablename) {
 		std::vector<unsigned> tags;
 
 		Metadata *md = cast<Metadata>(T);
-		
 		while (true) {
 			// do not need to look for anymore.
 			if (isa<DIBasicType>(md))      { break; }
@@ -446,16 +445,40 @@ namespace {
 		DIType *type = cast<DIType>(md);
 		std::reverse(tags.begin(), tags.end());  
 
+		std::string typestr;
 
-		// for function pointers - call 
+		// function pointers have to handled a tad differently.
+		// First argument in DISubroutineArray is return type;
+		// The rest are arguments' types. We also need a name of the value for this one - 
+		// terribly inconsistent but it works so far.
 		if (auto *a = dyn_cast<DISubroutineType>(md)) {
-			//const auto& fnptrtype = a->getTypeArray();
-			//Metadata *m = fnptrtype[0];
-			return "function pointer";
+			const auto& types = a->getTypeArray();
+			std::string lhs, rhs;
+
+			Metadata *rettypeinfo = types[0];
+			if (rettypeinfo == nullptr) { lhs += "void "; }  // void function
+			else { lhs += getTypeString(cast<DIType>(rettypeinfo), variablename); }
+
+			rhs += '(';
+			for (unsigned i = 1; i < types.size(); i++) {
+				rhs += getTypeString(cast<DIType>(types[i]), variablename);	
+				if (i <  types.size() - 1) { rhs += ", ";}
+				if (i == types.size() - 1) { rhs += ")"; }
+			}
+
+			for (unsigned& t: tags) {
+				switch (t) {
+					case dwarf::DW_TAG_pointer_type: { typestr += "*";      break; }
+					case dwarf::DW_TAG_const_type:   { typestr += "const "; break; }
+				}
+			}
+
+			typestr = lhs + '(' + typestr + variablename.str() + ')' + rhs;
+			return typestr;
 
 		}
 
-		std::string typestr;
+		// void things are just empty, gotta fix that.
 		if (type->getName().size() == 0) { typestr += "void "; }
 		else { typestr += type->getName().str() + " "; }
 
@@ -465,7 +488,6 @@ namespace {
 				case dwarf::DW_TAG_structure_type: { typestr = "struct " + typestr; break; }
 				case dwarf::DW_TAG_typedef:        { 							  ; break; }
 				case dwarf::DW_TAG_const_type:     { typestr += "const ";           break; }
-
 			}
 		}
 
@@ -476,10 +498,10 @@ namespace {
 		DIVariable *DI = cast<DIVariable>(getMetadata(V));
 		out << XMLOpeningTag("variable", 1);
 		out << XMLElement("name", DI->getName().str(), 2);
-		out << XMLElement("type", getTypeString(cast<DIType>(DI->getRawType())), 2);
+		out << XMLElement("type", getTypeString(cast<DIType>(DI->getRawType()), DI->getName().str()), 2);
 		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
 		out << XMLClosingTag("variable", 1);
-		errs() << getTypeString(cast<DIType>(DI->getRawType())) << "\n"; //#TODO REMOVE ME LATER
+		errs() << getTypeString(cast<DIType>(DI->getRawType()), DI->getName().str()) << "\n"; //#TODO REMOVE ME LATER
 	}
 
 	static void writeLocInfo(AreaLoc& loc, const char *tag, std::ofstream& out) {
