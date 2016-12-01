@@ -35,6 +35,7 @@ static cl::opt<std::string> OutXMLFilename("out",
 namespace {
 
 	typedef std::pair<unsigned,unsigned> AreaLoc;
+	typedef std::pair<Value *, Value *>  ValuePair;
 
 	static AreaLoc getRegionLoc(const Region *);
 	static AreaLoc getFunctionLoc(const Function *);
@@ -199,6 +200,34 @@ namespace {
 		}
 
 		return (numblocks == (int)blocks.size());
+	}
+
+
+	// one of the problems is detecting const ints/floats. while llvm ir
+	// creates storage for such entities, they are not used anywhere as 
+	// clang frontend propagates such constants across instructions.
+	// I.e. instead of 
+	// load 124 into constant %x; %1 = load %x; %2 = load %a; %3 = add %1 %2
+	// clang does the following:
+	// load 124 into constant %x; %2 = load %a; %3 = add 124 %2. 
+	// Solution: look at alloca instructions that only have one user and that 
+	// user is store instruction.
+	static DenseSet<ValuePair> findPossibleLocalConstants(Function *F) {
+		DenseSet<ValuePair> out;
+
+		for (BasicBlock& BB: F->getBasicBlockList())
+		for (Instruction& I: BB.getInstList()) {
+			if (auto *alloca = dyn_cast<AllocaInst>(&I)) {
+				for (User *U: alloca->users()) {
+					if (auto *store = dyn_cast<StoreInst>(U)) {
+						Value *operand = store->getValueOperand();
+						if (isa<ConstantInt>(operand)) { out.insert(ValuePair(operand, alloca)); }
+						if (isa<ConstantFP>(operand))  { out.insert(ValuePair(operand, alloca)); }
+					}
+				}
+			}
+		}
+		return out;
 	}
 
 	static DenseSet<Value *> DFSInstruction(Value *I) {
@@ -432,8 +461,8 @@ ret:
 
 			errs() << "Found region!\n";
 			
-
 			Function *F = R->getEntry()->getParent();
+			DenseSet<ValuePair> consts = findPossibleLocalConstants(F);
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
