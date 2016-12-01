@@ -307,6 +307,7 @@ namespace {
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs,
+								const DenseSet<ValuePair>& constants,
 								const AreaLoc& regionBounds,
 								const AreaLoc& functionBounds) {
 		static DenseSet<Value *> analyzed; 
@@ -363,8 +364,20 @@ namespace {
 				}
 			}
 		}
-	}
 
+		// basic type constants (i.e. int / floats) have to be checked separately.
+		// if there are multiple equal constants, we add all of them.
+		for (Value *V: I->operand_values()) {
+			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
+			for (const ValuePair& constant: constants) {
+				if (constant.first == V) {
+					Metadata *M = getMetadata(constant.second); // get alloca instruction info;
+					if (!declaredInArea(M, regionBounds)) {  inputargs.insert(constant.second); }
+					if ( declaredInArea(M, regionBounds)) { outputargs.insert(constant.second); }
+				}
+			}
+		}
+	}
 
 	// compares M's line parameter to AreaLoc, returns true if number is between.
 	static bool declaredInArea(Metadata *M, const AreaLoc& A) {
@@ -462,12 +475,11 @@ ret:
 			errs() << "Found region!\n";
 			
 			Function *F = R->getEntry()->getParent();
-			DenseSet<ValuePair> consts = findPossibleLocalConstants(F);
+			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
 			
-
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
 			removeOwnBlocks(predecessors, R);
@@ -480,16 +492,13 @@ ret:
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				if (!isa<AllocaInst>(I) && !isa<StoreInst>(I) && 
-				!isa<LoadInst>(I) && !isa<MemCpyInst>(I)) { continue; }
-				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, functionBounds);
+				analyzeOperands(I, predecessors, successors, inputargs, outputargs, constants, regionBounds, functionBounds);
 			}
 
 			std::ofstream outfile;
 			outfile.open(OutXMLFilename, std::ofstream::out);
 			//writing stuff in xml-like format
 			outfile << XMLOpeningTag("extractinfo", 0);
-			//writeFileInfo(regionBounds, functionBounds, outfile);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
 
