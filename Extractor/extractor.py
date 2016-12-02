@@ -23,40 +23,106 @@ class Variable:
     def __repr__(self):
         return '<Variable name:%s type:%s ptrl:%s isoutput:%s>' % (self.name, self.type, self.ptrl, self.isoutput)
 
-    def gettype(self):
-        ptr = ''.join(['*' for i in range(self.ptrl)])
-        return '%s %s' % (self.type, ptr)
-
-    def getname(self):
-        return self.name
-
-    def tostring(self):
-        if self.isoutput:
-            return ""
-        if not self.isoutput: 
-            ## we pass a pointer to the variable into the function
-            ptr = ''.join(['*' for i in range(self.ptrl + 1)])
-            return '%s %s%s' % (self.type, ptr, self.name)
+    def as_argument(self):
+        if self.isfunptr == True:
+            return self.type
+        return ('%s %s') % (self.type, self.name)
 
     @staticmethod
     def create(xml):
         name = xml.find('name')
-        ptrl = xml.find('ptrl')
         type = xml.find('type')
         isoutput = xml.find('isoutput')
+        isfunptr = xml.find('isfunptr')
         
         #name, ptrl and type are required
-        if name == None or ptrl == None or type == None:
+        if name == None or type == None:
             raise Exception('Missing variable info');
         
         variable = Variable()
         setattr(variable, 'name', name.text)
         setattr(variable, 'type', type.text)
-        setattr(variable, 'ptrl', int(ptrl.text))
         setattr(variable, 'isoutput', False)
-        if (isoutput != None):
+        setattr(variable, 'isfunptr', False)
+        if isoutput != None:
             variable.isoutput = bool(isoutput.text)
+        if isfunptr != None:
+            variable.isfunptr = bool(isfunptr.text)
         return variable
+
+class Function2:
+    def __init__(self):
+        self.inputs = []
+        self.outputs = []
+        self.special_out = []  ## for return / gotos within region. (see below)
+
+        self.funcname   = 'extracted' ## TODO user should be able to specify this
+        self.retvalname = '%s_retval' ## name of the structure returned from the function
+        self.retvaltype = 'struct %s_struct' ## type name of the structure returned from extracted function
+
+        # if extracted function contains return / goto statements, we need to also return same values
+        # from caller function. The idea is to use (flag, value) pairs. After extracted function returns, 
+        # we check these flags in the caller and return accordingly.
+        self.exitflagname  = '%s_flag_loc%s' 
+        self.exitvaluename = '%s_value_loc%s'
+
+    ## add inputs / outputs to the function
+    def add_input(self, var):  
+        self.inputs.append(var)
+
+    def add_output(self, var): 
+        self.outputs.append(var)
+
+    ## returns function definition.
+    def get_fn_definition(self):
+        args = '' 
+        for var in self.inputs: args = args + var.as_argument() + ', '
+        args = args.rstrip(', ') 
+        rett = self.retvaltype % (self.funcname)
+        return ('%s %s(%s) {\n') % (rett, self.funcname, args)
+
+    ## returns correct function call string
+    def get_fn_call(self):
+        args = ''
+        for var in self.inputs: args = args + var.name + ', '
+        args = args.rstrip(', ') 
+        rett = self.retvalname % (self.funcname)
+        return ('%s = %s(%s);\n') % (rett, self.funcname, args)
+
+    # have to also return input arguments. Passing inputs by pointer doesn't work in certain 
+    # cases (like struct initializers) and results in UB.
+    def declare_return_type(self):
+        args = '' 
+        for var in self.inputs:  args = args + '\t' + var.as_argument() + ';\n' 
+        for var in self.outputs: args = args + '\t' + var.as_argument() + ';\n' 
+
+## TODO specials 
+
+        name = self.retvalname % (self.funcname)
+        type = self.retvaltype % (self.funcname)
+        return '%s %s {\n%s};\n' % (type, name, args)
+
+    # when function is about to return, we need to store all the return values into 
+    # the structure and return said structure
+    # stores only inputs / outputs, special exits are handled separately
+    def store_retvals_and_return(self):
+        args = ''
+        rett = self.retvalname % (self.funcname)
+        for var in self.inputs:  args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
+        for var in self.outputs: args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
+        return '%sreturn %s;\n' % (args, rett)
+
+    # restores variables in the callee. If variable is in output variable list, we also need to
+    # define its time
+    def restore_retvals(self):
+        args = ''
+        rett = self.retvalname % (self.funcname)
+        for var in self.inputs:  args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
+        for var in self.outputs: args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
+
+        ## we also need to check for gotos / returns here...
+        ## TODO
+        return args;
 
 ## Function class. 
 class Function:
@@ -171,7 +237,7 @@ reginfo = None
 funinfo = None
 regloc = {}
 funloc = {} 
-func = Function() 
+special_exitlocs = []
 
 # dereferences function inputs. The problem with this approach is that C permits two variables
 # have the same name in two overlapping scopes, causing variable shadowing.. 
@@ -206,8 +272,8 @@ def findIdentifier(line, variable):
         idx = line.find(variable.name, end + 2)
     return line
 
-# Regions sometimes do not include closing brace so we need to count them take one spare out from
-# funcloc... This function also counts braces that are a part of a string...FIXME
+# Extracted regions sometimes do not include a closing brace so we need to find the line that
+# has it in the rest of the function. Assumes that closing brace is located on its own line.
 def regionClosingBrace():
     global reginfo
     numopeningbraces = 0
@@ -217,20 +283,28 @@ def regionClosingBrace():
         numopeningbraces = numopeningbraces + line.count('{')
         numclosingbraces = numclosingbraces + line.count('}')
     # take the first line that has closing brace in it...
-    print(numopeningbraces, numclosingbraces)
     if numclosingbraces < numopeningbraces:
         for i in range(reginfo.end + 1, funinfo.end): 
-            if funloc[i].count('}') == 1:
+            temp = funloc[i].lstrip(' \t')
+            temp = temp.rstrip(' \n')
+            # just an empty line
+            if len(temp) == 0:
+                continue
+            #found an empty line with brace, use this.
+            if temp == '}':
                 regloc[i] = funloc[i]
                 funloc[i] = None
                 reginfo.end = i;
+                break
+            #line filled with something, we should stop
+            if len(temp) != 0:
                 break
 
 #Boring parsing stuff
 def parseLLVMData():
     global reginfo 
     global funinfo 
-
+    func2 = Function2()
     tree = ET.parse(sys.argv[1]);
     for child in tree.getroot():
         if (child.tag == 'region'):
@@ -240,11 +314,12 @@ def parseLLVMData():
         if (child.tag == 'variable'):
             variable = Variable.create(child)
             if (variable.isoutput):
-                func.addOutput(variable)
+                func2.add_output(variable)
             else:
-                func.addInput(variable)
+                func2.add_input(variable)
         if (child.tag == 'regionexit'):
-            func.addExit(int(child.text))
+            special_exitlocs.append(int(child.text))
+    return func2
 
 def parseSrcFile():
     f = open(sys.argv[2])
@@ -297,13 +372,15 @@ def main():
     if len(sys.argv) != 3:
         sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
         sys.exit(1)
-    parseLLVMData()
-    parseSrcFile()
-    regionClosingBrace()
-    extract()    
+    func2 = parseLLVMData()
+    print(func2.get_fn_definition())
+    print(func2.get_fn_call())
+    print(func2.declare_return_type())
+    print(func2.store_retvals_and_return())
+    print(func2.restore_retvals())
+    #parseSrcFile()
+    #regionClosingBrace()
+    #extract()    
 
-    #llvmdata = parseLLVMInfo()
-    #srcdata = parseSrcFile(llvmdata[0])
-    #extract(srcdata, llvmdata)
 
 main()
