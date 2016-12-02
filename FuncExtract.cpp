@@ -446,7 +446,6 @@ namespace {
 		std::reverse(tags.begin(), tags.end());  
 
 		std::string typestr;
-
 		// function pointers have to handled a tad differently.
 		// First argument in DISubroutineArray is return type;
 		// The rest are arguments' types. We also need a name of the value for this one - 
@@ -460,6 +459,7 @@ namespace {
 			else { lhs += getTypeString(cast<DIType>(rettypeinfo), variablename); }
 
 			rhs += '(';
+			if (types.size() == 1) { rhs += "void)"; } // we have 0 input arguments...
 			for (unsigned i = 1; i < types.size(); i++) {
 				rhs += getTypeString(cast<DIType>(types[i]), variablename);	
 				if (i <  types.size() - 1) { rhs += ", ";}
@@ -475,8 +475,10 @@ namespace {
 
 			typestr = lhs + '(' + typestr + variablename.str() + ')' + rhs;
 			return typestr;
-
 		}
+
+		// do not insert space when we are not adding anything else...
+		if (tags.size() == 0) { return type->getName().str();  }
 
 		// void things are just empty, gotta fix that.
 		if (type->getName().size() == 0) { typestr += "void "; }
@@ -490,7 +492,6 @@ namespace {
 				case dwarf::DW_TAG_const_type:     { typestr += "const ";           break; }
 			}
 		}
-
 		return typestr; 
 	}
 	
@@ -498,10 +499,10 @@ namespace {
 		DIVariable *DI = cast<DIVariable>(getMetadata(V));
 		out << XMLOpeningTag("variable", 1);
 		out << XMLElement("name", DI->getName().str(), 2);
-		out << XMLElement("type", getTypeString(cast<DIType>(DI->getRawType()), DI->getName().str()), 2);
+		out << XMLElement("type", getTypeString(cast<DIType>(DI->getRawType()), DI->getName()), 2);
 		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
 		out << XMLClosingTag("variable", 1);
-		errs() << getTypeString(cast<DIType>(DI->getRawType()), DI->getName().str()) << "\n"; //#TODO REMOVE ME LATER
+		errs() << getTypeString(cast<DIType>(DI->getRawType()), DI->getName()) << "\n"; //#TODO REMOVE ME LATER
 	}
 
 	static void writeLocInfo(AreaLoc& loc, const char *tag, std::ofstream& out) {
