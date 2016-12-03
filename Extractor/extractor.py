@@ -35,7 +35,7 @@ class Variable:
         self.isoutput = False
 
     def __repr__(self):
-        return '<Variable name:%s type:%s ptrl:%s isoutput:%s>' % (self.name, self.type, self.ptrl, self.isoutput)
+        return '<Variable name:%s type:%s isoutput:%s>' % (self.name, self.type, self.isoutput)
 
     def as_argument(self):
         if self.isfunptr == True:
@@ -146,9 +146,8 @@ class Function2:
             args = args + '\t' + cond.cond.as_argument() + ';\n'
             if (cond.stmt == 'return'): args = args + '\t' + cond.var.as_argument() + ';\n'
 
-        name = self.retvalname % (self.funcname)
         type = self.retvaltype % (self.funcname)
-        return '%s %s {\n%s};\n' % (type, name, args)
+        return '%s {\n%s};\n\n' % (type, args)
 
     # defines return value in the beginning of the extracted function and sets 
     # special return flags to 0 if those exist
@@ -159,7 +158,7 @@ class Function2:
         
         for cond in self.special_out:
             out = out + ('\t%s.%s = 0;\n' % (name, cond.cond.name)) 
-        return out
+        return out + '\n'
 
 
     # when function is about to return, we need to store all the return values into 
@@ -183,7 +182,9 @@ class Function2:
         # generate if statements if applicable
         out = ''
         for cond in self.special_out:
-            out = 'if(%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, cond.var)
+            var = cond.var.name
+            if cond.stmt == 'return': var = '%s.%s' % (rett, cond.var.name)
+            out = out + 'if(%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, var)
         return out + args;
 
         
@@ -194,11 +195,19 @@ def extract2(function):
     sys.stdout.write(function.declare_return_type())
     sys.stdout.write(function.get_fn_definition())
     sys.stdout.write(function.define_return_value())
+    for line in regloc.values():
+        sys.stdout.write(line)
+    if len(function.special_out) == 0:
+        sys.stdout.write(function.store_retvals_and_return())
+    sys.stdout.write('}\n\n')
 
-    #for line in regloc.values():
-    #    sys.stdout.write(line)
-    #sys.stdout.write(func.setReturnValues())
-    #sys.stdout.write('}\n')
+    for i in range(funinfo.start, reginfo.start):
+        sys.stdout.write(funloc[i])
+    sys.stdout.write(function.get_fn_call())  
+    sys.stdout.write(function.restore_retvals()) ## if function is not void, restore all variables
+    for i in range(reginfo.end + 1, funinfo.end + 1):
+        sys.stdout.write(funloc[i])
+
 
 
 ## Function class. 
@@ -381,7 +390,7 @@ def line_contains(line, string):
 
 
 #Boring parsing stuff
-def parseLLVMData():
+def parse_llvm():
     global reginfo 
     global funinfo 
     global special_exitlocs
@@ -403,7 +412,7 @@ def parseLLVMData():
     special_exitlocs = sorted(special_exitlocs)
     return func2
 
-def parseSrcFile():
+def parse_src():
     f = open(sys.argv[2])
     line = f.readline()
     linenum = 1
@@ -447,17 +456,15 @@ def extract():
     sys.stdout.write(func.restoreReturnedValues()) ## if function is not void, restore all variables
     for i in range(reginfo.end + 1, funinfo.end + 1):
         sys.stdout.write(funloc[i])
-    #sys.stdout.write('}\n')
 
 
 def main():
     if len(sys.argv) != 3:
         sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
         sys.exit(1)
-    func2 = parseLLVMData()
-    parseSrcFile()
+    func2 = parse_llvm()
+    parse_src()
     region_find_closing_brace()
-    #extract()    
     extract2(func2)
 
 
