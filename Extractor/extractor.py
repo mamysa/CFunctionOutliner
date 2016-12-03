@@ -2,6 +2,14 @@ import sys
 import re
 import xml.etree.cElementTree as ET
 
+#GLOBALS these are very very ... very important. Otherwise they wouldn't be globals... ;) 
+reginfo = None
+funinfo = None
+regloc = {}
+funloc = {} 
+funrettype = ''   
+special_exitlocs = []
+
 class LocInfo:
     @staticmethod
     def create(xml):
@@ -20,6 +28,12 @@ class LocInfo:
 
 #######################################
 class Variable: 
+    def __init__(self, name, type):
+        self.name = name
+        self.type = type
+        self.isfunptr = False
+        self.isoutput = False
+
     def __repr__(self):
         return '<Variable name:%s type:%s ptrl:%s isoutput:%s>' % (self.name, self.type, self.ptrl, self.isoutput)
 
@@ -39,22 +53,27 @@ class Variable:
         if name == None or type == None:
             raise Exception('Missing variable info');
         
-        variable = Variable()
-        setattr(variable, 'name', name.text)
-        setattr(variable, 'type', type.text)
-        setattr(variable, 'isoutput', False)
-        setattr(variable, 'isfunptr', False)
+        variable = Variable(name.text, type.text)
         if isoutput != None:
             variable.isoutput = bool(isoutput.text)
         if isfunptr != None:
             variable.isfunptr = bool(isfunptr.text)
         return variable
 
+# if condition class for possible return / goto statements inside the region that we have to check 
+# in the caller function
+class IfCondition:
+    def __init__(self, cond, var, stmt):
+        self.cond = cond
+        self.var  = var
+        self.stmt = stmt
+
+
 class Function2:
     def __init__(self):
         self.inputs = []
         self.outputs = []
-        self.special_out = []  ## for return / gotos within region. (see below)
+        self.special_out = [] # for return / gotos within region. (see below)
 
         self.funcname   = 'extracted' ## TODO user should be able to specify this
         self.retvalname = '%s_retval' ## name of the structure returned from the function
@@ -72,6 +91,33 @@ class Function2:
 
     def add_output(self, var): 
         self.outputs.append(var)
+
+    # replace return / goto statement in the region with setting flag to 1 and setting value to whatever
+    # comes on the rhs of the return statement.
+    def check_exit_loc(self, loc):
+        temp = regloc[loc]
+        temp = temp.lstrip(' \t')
+        temp = temp.rstrip('\n;  ')
+
+        retstmt = line_contains(temp, 'return')
+        if retstmt != (None, None):
+            flg = Variable(self.exitflagname  % (self.funcname, loc), 'char')
+            val = Variable(self.exitvaluename % (self.funcname, loc), 'TODO')
+            self.special_out.append(IfCondition(flg, val, 'return')) # need this fn_restore_variables procedure
+            
+            # store these variables in the struct and replace current line with it
+            # we do not have to restore all the variables if we are returning.
+            rett = self.retvalname % (self.funcname)
+            v1 = '%s.%s = %s;\n' % (rett, flg.name , '1')
+            v2 = '%s.%s = %s;\n' % (rett, val.name , retstmt[1]) # store retstmt.rhs
+            regloc[loc] = '%s%sreturn %s;\n' % (v1, v2, rett)    # should also return 
+            return
+
+        ## TODO 
+        gotostmt = line_contains(temp, 'goto')
+        if goto != (None, None):
+            print('we got a goto!!!')
+
 
     ## returns function definition.
     def get_fn_definition(self):
@@ -96,11 +142,25 @@ class Function2:
         for var in self.inputs:  args = args + '\t' + var.as_argument() + ';\n' 
         for var in self.outputs: args = args + '\t' + var.as_argument() + ';\n' 
 
-## TODO specials 
+        for cond in self.special_out:
+            args = args + '\t' + cond.cond.as_argument() + ';\n'
+            if (cond.stmt == 'return'): args = args + '\t' + cond.var.as_argument() + ';\n'
 
         name = self.retvalname % (self.funcname)
         type = self.retvaltype % (self.funcname)
         return '%s %s {\n%s};\n' % (type, name, args)
+
+    # defines return value in the beginning of the extracted function and sets 
+    # special return flags to 0 if those exist
+    def define_return_value(self):
+        name = self.retvalname % (self.funcname)
+        type = self.retvaltype % (self.funcname)
+        out  = '\t%s %s;\n' % (type, name)
+        
+        for cond in self.special_out:
+            out = out + ('\t%s.%s = 0;\n' % (name, cond.cond.name)) 
+        return out
+
 
     # when function is about to return, we need to store all the return values into 
     # the structure and return said structure
@@ -120,9 +180,26 @@ class Function2:
         for var in self.inputs:  args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
         for var in self.outputs: args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
 
-        ## we also need to check for gotos / returns here...
-        ## TODO
-        return args;
+        # generate if statements if applicable
+        out = ''
+        for cond in self.special_out:
+            out = 'if(%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, cond.var)
+        return out + args;
+
+        
+def extract2(function):
+    for loc in special_exitlocs:
+        function.check_exit_loc(loc)
+
+    sys.stdout.write(function.declare_return_type())
+    sys.stdout.write(function.get_fn_definition())
+    sys.stdout.write(function.define_return_value())
+
+    #for line in regloc.values():
+    #    sys.stdout.write(line)
+    #sys.stdout.write(func.setReturnValues())
+    #sys.stdout.write('}\n')
+
 
 ## Function class. 
 class Function:
@@ -232,12 +309,6 @@ class Function:
                 out = out + 'return %s;\n' % (self.retvalname)
                 regionloc[exit] = out
 
-#GLOBALS 
-reginfo = None
-funinfo = None
-regloc = {}
-funloc = {} 
-special_exitlocs = []
 
 # dereferences function inputs. The problem with this approach is that C permits two variables
 # have the same name in two overlapping scopes, causing variable shadowing.. 
@@ -274,12 +345,11 @@ def findIdentifier(line, variable):
 
 # Extracted regions sometimes do not include a closing brace so we need to find the line that
 # has it in the rest of the function. Assumes that closing brace is located on its own line.
-def regionClosingBrace():
+def region_find_closing_brace():
     global reginfo
     numopeningbraces = 0
     numclosingbraces = 0
     for line in regloc.values():
-        print(line)
         numopeningbraces = numopeningbraces + line.count('{')
         numclosingbraces = numclosingbraces + line.count('}')
     # take the first line that has closing brace in it...
@@ -300,10 +370,21 @@ def regionClosingBrace():
             if len(temp) != 0:
                 break
 
+#FIXME this will break quite a lot.
+def line_contains(line, string):
+    idx = line.find(string) 
+    if idx != -1:
+        ## TODO extract things on the LHS too as we might have multiple statements on the same line...
+        rhs = line[(idx+len(string)):]
+        return (string, rhs) 
+    return (None, None)
+
+
 #Boring parsing stuff
 def parseLLVMData():
     global reginfo 
     global funinfo 
+    global special_exitlocs
     func2 = Function2()
     tree = ET.parse(sys.argv[1]);
     for child in tree.getroot():
@@ -319,6 +400,7 @@ def parseLLVMData():
                 func2.add_input(variable)
         if (child.tag == 'regionexit'):
             special_exitlocs.append(int(child.text))
+    special_exitlocs = sorted(special_exitlocs)
     return func2
 
 def parseSrcFile():
@@ -373,14 +455,11 @@ def main():
         sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
         sys.exit(1)
     func2 = parseLLVMData()
-    print(func2.get_fn_definition())
-    print(func2.get_fn_call())
-    print(func2.declare_return_type())
-    print(func2.store_retvals_and_return())
-    print(func2.restore_retvals())
-    #parseSrcFile()
-    #regionClosingBrace()
+    parseSrcFile()
+    region_find_closing_brace()
     #extract()    
+    extract2(func2)
 
 
-main()
+if __name__ == '__main__':
+    main()
