@@ -451,10 +451,12 @@ namespace {
 			const auto& types = a->getTypeArray();
 			std::string lhs, rhs;
 
+			// get function's return type
 			Metadata *rettypeinfo = types[0];
 			if (rettypeinfo == nullptr) { lhs += "void "; }  // void function
 			else { lhs += getTypeString(cast<DIType>(rettypeinfo), variablename).first; }
 
+			// get function's arguments' types
 			rhs += '(';
 			if (types.size() == 1) { rhs += "void)"; } // we have 0 input arguments...
 			for (unsigned i = 1; i < types.size(); i++) {
@@ -463,6 +465,7 @@ namespace {
 				if (i == types.size() - 1) { rhs += ")"; }
 			}
 
+			// is function pointer constant or/and actually a pointer?
 			for (unsigned& t: tags) {
 				switch (t) {
 					case dwarf::DW_TAG_pointer_type: { typestr += "*";      break; }
