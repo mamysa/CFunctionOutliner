@@ -86,11 +86,6 @@ namespace {
 	}
 
 	static AreaLoc getFunctionLoc(const Function *F) {
-		if ( !F->hasMetadata() || !isa<DISubprogram>(F->getMetadata(0)) ) { 
-			errs() << "bad debug meta\n";
-			return AreaLoc(-1, -1); 
-		}
-
 		Metadata *M = F->getMetadata(0);
 		unsigned min = cast<DISubprogram>(M)->getLine(); 
 		unsigned max = std::numeric_limits<unsigned>::min();
@@ -107,7 +102,7 @@ namespace {
 		return AreaLoc(min, max); 
 	}
 
-
+	
 	// we need line numbers exiting basic blocks to determine what kind of 
 	// branching we have there. In case if those lines of code contain goto/return,
 	// we have to do some extra work...
@@ -497,6 +492,19 @@ namespace {
 		}
 		return std::pair<std::string, bool>(typestr, false);
 	}
+
+	// gets function's return type
+	static std::string getFunctionReturnType(const Function *F) {
+		DISubprogram *SP = cast<DISubprogram>(F->getMetadata(0));
+		if (auto *ST = dyn_cast<DISubroutineType>(SP->getRawType())) {
+			Metadata *M = ST->getTypeArray()[0];
+			if (!M) { return std::string("void"); }
+			return getTypeString(cast<DIType>(M), "").first;
+		}
+
+		return std::string("unknown");
+	}
+
 	
 	static void writeVariableInfo(Value *V, bool isOutputVar, std::ofstream& out) {
 		DIVariable *DI = cast<DIVariable>(getMetadata(V));
@@ -530,6 +538,16 @@ namespace {
 			errs() << "Found region!\n";
 			
 			Function *F = R->getEntry()->getParent();
+			if (!F->hasMetadata() || !isa<DISubprogram>(F->getMetadata(0))) { 
+				errs() << "Function is missing debug metadata, skipping...\n";
+				return false;
+			}
+
+			// need to get functions return type...
+			
+
+
+
 			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
@@ -564,6 +582,10 @@ namespace {
 
 			// dump region exit locs
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
+			outfile << XMLElement("funcreturntype", getFunctionReturnType(F), 1);
+			errs() << "fnreturntype: " << getFunctionReturnType(F) << "\n";
+
+
 
 			outfile << XMLClosingTag("extractinfo", 0);
 			outfile.close();
