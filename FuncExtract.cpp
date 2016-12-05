@@ -420,7 +420,8 @@ namespace {
 			// we are interested in array type. 
 			if (auto a = dyn_cast<DICompositeType>(md)) {
 				if (a->getTag() == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
-				if (a->getTag() == dwarf::DW_TAG_structure_type) { tags.push_back(a->getTag()); }
+				if (a->getTag() == dwarf::DW_TAG_structure_type)   { tags.push_back(a->getTag()); break; }
+				if (a->getTag() == dwarf::DW_TAG_enumeration_type) { tags.push_back(a->getTag()); break; }
 				Metadata *next = a->getBaseType();
 				if (next == nullptr)  { break; } // no basetype property here, bailing
 				md = next; 
@@ -479,15 +480,22 @@ namespace {
 		if (tags.size() == 0) { return std::pair<std::string, bool>(type->getName().str(), false);  }
 
 		// void things are just empty, gotta fix that.
-		if (type->getName().size() == 0) { typestr += "void "; }
+		// also, anonymous structs are also going to show up as 'struct void'. Passing anonymous
+		// structs or pointer to structs is not possible in C so end-user will probably have to fix his code
+		// to prevent such things from happening.
+		if (type->getName().size() == 0) { 
+			if (tags.size() != 0 && tags[0] == dwarf::DW_TAG_structure_type) { typestr += "AnonymousFIXME "; }
+			else { typestr += "void "; }; 
+		}
 		else { typestr += type->getName().str() + " "; }
 
 		for (unsigned& t: tags) {
 			switch (t) {
-				case dwarf::DW_TAG_pointer_type:   { typestr += "*"; 			    break; }
-				case dwarf::DW_TAG_structure_type: { typestr = "struct " + typestr; break; }
-				case dwarf::DW_TAG_typedef:        { 							  ; break; }
-				case dwarf::DW_TAG_const_type:     { typestr += "const ";           break; }
+				case dwarf::DW_TAG_pointer_type:     { typestr += "*"; 			      break; }
+				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
+				case dwarf::DW_TAG_enumeration_type: { typestr = "enum " + typestr;   break; }
+				case dwarf::DW_TAG_typedef:          { 							    ; break; }
+				case dwarf::DW_TAG_const_type:       { typestr += "const ";           break; }
 			}
 		}
 		return std::pair<std::string, bool>(typestr, false);
