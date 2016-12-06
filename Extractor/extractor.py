@@ -7,7 +7,7 @@ reginfo = None
 funinfo = None
 regloc = {}
 funloc = {} 
-funrettype = ''   
+funrettype = 'UNKNOWN'   
 special_exitlocs = []
 
 class LocInfo:
@@ -94,15 +94,16 @@ class Function2:
 
     # replace return / goto statement in the region with setting flag to 1 and setting value to whatever
     # comes on the rhs of the return statement.
+    # we expect return/goto statements formatted in a certain way.
     def check_exit_loc(self, loc):
         temp = regloc[loc]
-        temp = temp.lstrip(' \t')
-        temp = temp.rstrip('\n;  ')
+        temp = temp.lstrip('\t ')
+        temp = temp.rstrip('\n; ')
 
         retstmt = line_contains(temp, 'return')
         if retstmt != (None, None):
             flg = Variable(self.exitflagname  % (self.funcname, loc), 'char')
-            val = Variable(self.exitvaluename % (self.funcname, loc), 'TODO')
+            val = Variable(self.exitvaluename % (self.funcname, loc), funrettype)
             self.special_out.append(IfCondition(flg, val, 'return')) # need this fn_restore_variables procedure
             
             # store these variables in the struct and replace current line with it
@@ -184,13 +185,15 @@ class Function2:
         for cond in self.special_out:
             var = cond.var.name
             if cond.stmt == 'return': var = '%s.%s' % (rett, cond.var.name)
-            out = out + 'if(%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, var)
+            out = out + 'if (%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, var)
         return out + args;
 
         
 def extract2(function):
     for loc in special_exitlocs:
         function.check_exit_loc(loc)
+
+    numbraces = 0 # we need to indent newly inserted lines
 
     sys.stdout.write(function.declare_return_type())
     sys.stdout.write(function.get_fn_definition())
@@ -208,149 +211,6 @@ def extract2(function):
     for i in range(reginfo.end + 1, funinfo.end + 1):
         sys.stdout.write(funloc[i])
 
-
-
-## Function class. 
-class Function:
-    def __init__(self):
-        self.inputargs = [] 
-        self.outputargs = [] 
-        self.exitedges = []
-        self.outputspecial = []
-        self.retvalname = 'extractedretval'
-        self.retvaltype = 'struct extracted_retval'
-        self.exitbool = 'bool_exited_at_loc'
-        self.exitvalue = 'val_exited_at_loc'
-
-    def addInput(self, variable):
-        self.inputargs.append(variable)
-
-    def addOutput(self, variable):
-        self.outputargs.append(variable)
-
-    def addExit(self, exit):
-        self.exitedges.append(exit)
-
-    def gettype(self):
-        if len(self.outputargs) == 0:
-            return 'void'
-        return 'struct ' + self.retvalname;
-
-    def getFnDecl(self):
-        args = ''
-        for variable in self.inputargs:
-            args = args + variable.gettype() + '*' + variable.getname() + ', '
-        args = args.rstrip(', ')
-        type = self.gettype()
-        return '%s extracted(%s) {\n' % (type, args)
-
-    def getFnCall(self):
-        args = ''
-        for variable in self.inputargs:
-            args = args + '&' + variable.getname() + ', '
-        args = args.rstrip(', ')
-        return 'extracted(%s);\n' % (args) ##TODO retvals
-
-    # in case if extracted function returns something, return structure needs to be defined first. 
-    # returns 'struct struct_type retval' or nothing if the fuction does not return anything
-    # if we have special retvalues, we initialize boolean values to 0.
-    def declareReturnValue(self):
-        if len(self.outputargs) == 0 and len(self.outputspecial) == 0:
-            return ""
-        out = '%s %s;\n' % (self.retvaltype, self.retvalname)
-        for var in self.outputspecial:
-            out = out + '%s.%s_%s = 0;\n' % (self.retvalname, self.exitbool, var[0])
-        return out
-
-
-    # if function returns, we need to assign to values in the structure where appropriate.
-    def setReturnValues(self):
-        if len(self.outputargs) == 0:
-            return ""
-        out = ''
-        for var in self.outputargs:
-            temp = '%s.%s = %s;\n' % (self.retvalname, var.getname(), var.getname())
-            out = out + temp
-        retstmt = 'return %s;\n' % self.retvalname;
-        out = out + retstmt
-        return out
-
-    #if extracted function returns something, we have to declare these variables 
-    # in the original function and assign correct return values.
-    def restoreReturnedValues(self): 
-        out = ''
-        for var in self.outputargs:
-            st = '%s%s = %s.%s;\n' % (var.gettype(), var.getname(), self.retvalname, var.getname())
-            out = out + st
-        return out
-
-    def getReturnTypeDefinition(self):
-        out = 'struct ' + self.retvalname + ' {\n'
-        for var in self.outputargs:
-            out = out + '%s%s;\n' % (var.gettype(), var.getname())
-        for var in self.outputspecial:
-            out = out + 'char %s_%s;\n' % (self.exitbool, var[0])
-            out = out + 'todo %s_%s;\n' % (self.exitvalue, var[0]) 
-            #FIXME we need original funcs return type!
-        out = out + '};\n'
-        return out
-
-    # Have to examine exiting locations of the region. 
-    # If region contains return statements, we will need to return original function too. 
-    # Same idea with gotos.
-    # In case if region contains return statement, we remove it, add a boolean into retval structure, 
-    # also save variable returned in said structure, and check whether or not the boolean value 
-    # is set in the parent function. 
-    def analyzeExitEdges(self, regionloc):
-        for exit in self.exitedges:
-            temp = regionloc[exit]
-            temp = temp.lstrip(' \t')
-            temp = temp.rstrip('\n;  ')
-
-            # looking for return statement
-            idx = temp.find('return') # yeah this totally cannot break... at all. I said so
-            if idx != -1:  
-                retval = temp[(idx+len('return')):]
-                self.outputspecial.append((exit, 'return', retval)) 
-                # replace return statement with structure 
-                out = '%s.%s_%s = 1; \n' % (self.retvalname, self.exitbool, exit)
-                out = out + '%s.%s_%s = %s;\n' % (self.retvalname, self.exitvalue, exit, retval)
-                out = out + 'return %s;\n' % (self.retvalname)
-                regionloc[exit] = out
-
-
-# dereferences function inputs. The problem with this approach is that C permits two variables
-# have the same name in two overlapping scopes, causing variable shadowing.. 
-# How to fix: have different names for each variable... :)  ...and don't have things like 
-# the following:
-# int x = 12;
-# {
-#   char x = 255; ...;
-# } ...
-def findIdentifier(line, variable):
-    regex = re.compile('[a-zA-Z0-9_]')
-    idx = line.find(variable.name)
-    while idx != -1:
-        # if whatever comes before or after the variable still contains alphanumerics, 
-        # then variable itself is not exact match.
-        begin = idx - 1
-        end   = idx + len(variable.name) 
-        if begin >= 0 and regex.match(line[begin]):
-            idx = line.find(variable.name, end)
-            continue
-        if end < len(line) and regex.match(line[end]):
-            idx = line.find(variable.name, end)
-            continue
-
-        newline = ""
-        for i in range(idx):
-           newline = newline + line[i]
-        newline = newline + '(*' + variable.name + ')'
-        for i in range(end, len(line)):
-           newline = newline + line[i]
-        line = newline
-        idx = line.find(variable.name, end + 2)
-    return line
 
 # Extracted regions sometimes do not include a closing brace so we need to find the line that
 # has it in the rest of the function. Assumes that closing brace is located on its own line.
@@ -394,6 +254,8 @@ def parse_llvm():
     global reginfo 
     global funinfo 
     global special_exitlocs
+    global funrettype
+
     func2 = Function2()
     tree = ET.parse(sys.argv[1]);
     for child in tree.getroot():
@@ -409,6 +271,8 @@ def parse_llvm():
                 func2.add_input(variable)
         if (child.tag == 'regionexit'):
             special_exitlocs.append(int(child.text))
+        if (child.tag == 'funcreturntype'):
+            funrettype = child.text
     special_exitlocs = sorted(special_exitlocs)
     return func2
 
@@ -425,38 +289,6 @@ def parse_src():
         line = f.readline()
         linenum = linenum + 1
     f.close()
-
-## the part where interesting things happen.  
-def extract():
-    #TODO analyze areas of interest - i.e. lines that point to external basicblock - we might have 
-    # return statement or goto statement there. 
-    ## for now, i am disregarding those things and assuming that extracted region does not have any 
-    ## outputs and does not have any return / goto statements 
-    func.analyzeExitEdges(regloc)
-
-    ## dereference arguments in function body
-    for (linenum, line) in regloc.items():
-        for variable in func.inputargs:
-            line = findIdentifier(line, variable)
-        regloc[linenum] = line
-        
-    #TODO copy everything from original file before given function and after 
-    sys.stdout.write(func.getReturnTypeDefinition())
-    sys.stdout.write(func.getFnDecl())
-    sys.stdout.write(func.declareReturnValue())
-    for line in regloc.values():
-        sys.stdout.write(line)
-    sys.stdout.write(func.setReturnValues())
-    sys.stdout.write('}\n')
-
-    # write original function
-    for i in range(funinfo.start, reginfo.start):
-        sys.stdout.write(funloc[i])
-    sys.stdout.write(func.getFnCall())  
-    sys.stdout.write(func.restoreReturnedValues()) ## if function is not void, restore all variables
-    for i in range(reginfo.end + 1, funinfo.end + 1):
-        sys.stdout.write(funloc[i])
-
 
 def main():
     if len(sys.argv) != 3:
