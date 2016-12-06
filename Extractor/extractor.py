@@ -116,8 +116,15 @@ class Function2:
 
         ## TODO 
         gotostmt = line_contains(temp, 'goto')
-        if goto != (None, None):
-            print('we got a goto!!!')
+        if gotostmt != (None, None):
+            flg = Variable(self.exitflagname  % (self.funcname, loc), 'char')
+            val = Variable(gotostmt[1], 'label') # this should be label
+            self.special_out.append(IfCondition(flg, val, 'goto')) 
+
+            ## store flag
+            rett = self.retvalname % (self.funcname)
+            v1 = '%s.%s = %s;\n' % (rett, flg.name , '1')
+            regloc[loc] = '%s%s' % (v1, self.store_retvals_and_return())    
 
 
     ## returns function definition.
@@ -186,7 +193,7 @@ class Function2:
             var = cond.var.name
             if cond.stmt == 'return': var = '%s.%s' % (rett, cond.var.name)
             out = out + 'if (%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, var)
-        return out + args;
+        return args + out;
 
         
 def extract2(function):
