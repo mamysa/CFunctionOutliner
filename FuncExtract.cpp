@@ -302,7 +302,6 @@ namespace {
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs,
-								const DenseSet<ValuePair>& constants,
 								const AreaLoc& regionBounds,
 								const AreaLoc& functionBounds) {
 		static DenseSet<Value *> analyzed; 
@@ -359,29 +358,30 @@ namespace {
 				}
 			}
 		}
+	}
 
-		// basic type constants (i.e. int / floats) have to be checked separately.
-		// Every constant that has the same constant value and are used in the region
-		// are added to the input list. You really shouldn't have equal constants defined more than
-		// once, though.
-		// Every costant defined inside the region is added to output list. Might not be
-		// precise enough.
-		// This works fine unless you start casting such constants and you end up having literal 
-		// values that do not have corresponding alloca instruction. So... don't do arbitrary 
-		// casting inside the region.  
+	// basic type constants (i.e. int / floats) have to be checked separately.
+	// Every constant that has the same constant value and are used in the region
+	// are added to the input list. You really shouldn't have equal constants defined more than
+	// once, though.
+	// This works fine unless you start casting such constants and you end up having literal 
+	// values that do not have corresponding alloca instruction. So... don't do arbitrary 
+	// casting inside the region.  
+	// if outsideRegion is true, then I is outside the region and thus args is outputargs.
+	// if it is false, then we are looking for inputargs.
+	static void analyzeConstants(Instruction *I, 
+								 bool  outsideRegion, // is I outside the region?
+								 DenseSet<Value *>& args,
+								 const AreaLoc& regionBounds,
+								 const DenseSet<ValuePair>& constants) {
 		for (Value *V: I->operand_values()) {
 			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
 			for (const ValuePair& constant: constants) {
 				if (constant.first == V) {
 					Metadata *M = getMetadata(constant.second); // get alloca instruction info;
-					if (!M) {
-						errs() << "Missing metadata, skipping:\n";
-						constant.second->dump(); 
-						continue;
-					}
-
-					if (!declaredInArea(M, regionBounds)) {  inputargs.insert(constant.second); }
-					if ( declaredInArea(M, regionBounds)) { outputargs.insert(constant.second); }
+					if (!M) { continue; }
+					if (!outsideRegion && !declaredInArea(M, regionBounds)) { args.insert(constant.second); }
+					if ( outsideRegion &&  declaredInArea(M, regionBounds)) { args.insert(constant.second); }
 				}
 			}
 		}
@@ -554,11 +554,6 @@ namespace {
 				return false;
 			}
 
-			// need to get functions return type...
-			
-
-
-
 			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
@@ -576,7 +571,14 @@ namespace {
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				analyzeOperands(I, predecessors, successors, inputargs, outputargs, constants, regionBounds, functionBounds);
+				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, functionBounds);
+				analyzeConstants(I, false, inputargs, regionBounds, constants);
+			}
+
+			for (auto blockit = successors.begin(); blockit != successors.end(); ++blockit) 
+			for (auto instrit = (*blockit)->begin(); instrit != (*blockit)->end(); ++instrit) {
+				Instruction *I = &*instrit;
+				analyzeConstants(I, true, outputargs, regionBounds, constants);
 			}
 
 			std::ofstream outfile;
