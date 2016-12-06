@@ -136,7 +136,7 @@ namespace {
 		if (auto *a = dyn_cast<GlobalVariable>(V)) {
 			SmallVector<DIGlobalVariable *, 1> sm;
 			a->getDebugInfo(sm);	
-			return sm[0];
+			if (sm.size() == 1) { return sm[0]; }
 		}
 
 		return nullptr;
@@ -310,13 +310,9 @@ namespace {
 			// we don't have to look at values we have seen before... 
 			if (analyzed.find(*it) != analyzed.end()) { continue; }
 			analyzed.insert(*it);
-
+			
 			Metadata *M = getMetadata(*it);
-			if (!M) {
-				errs() << "Missing debug info for:\n";
-				(*it)->dump();
-				continue;
-			}
+			if (!M) { continue; }
 
 			if (auto instr = dyn_cast<AllocaInst>(*it)) {
 				// when compiled with -O0 flag, all function arguments are copied onto the stack
@@ -518,7 +514,9 @@ namespace {
 
 	
 	static void writeVariableInfo(Value *V, bool isOutputVar, std::ofstream& out) {
-		DIVariable *DI = cast<DIVariable>(getMetadata(V));
+		Metadata *M = getMetadata(V);
+		if (!M) { return; }
+		DIVariable *DI = cast<DIVariable>(M);
 		auto kv = getTypeString(cast<DIType>(DI->getRawType()), DI->getName());
 
 		out << XMLOpeningTag("variable", 1);
