@@ -1,0 +1,14 @@
+<extractinfo>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>myfunction</name>
+		<type>int (*myfunction)(int)</type>	
+	</variable>
+</extractinfo>

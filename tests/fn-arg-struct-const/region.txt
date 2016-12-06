@@ -1,4 +1,0 @@
-!func1
-for.cond2
-for.body4
-for.inc8
