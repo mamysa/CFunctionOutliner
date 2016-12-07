@@ -403,7 +403,7 @@ namespace {
 
 	// extracts the type of the provided debuginfo type as a string. Follows the pointers 
 	// as necessary. std::pair is returned because function pointers have to be treated 
-	// slightly different and in that case we do not have to append variable name.
+	// slightly differently and in that case we do not have to append variable name.
 	static std::pair<std::string, bool> getTypeString(DIType *T, StringRef variablename) {
 		std::vector<unsigned> tags;
 
@@ -417,6 +417,7 @@ namespace {
 			if (auto a = dyn_cast<DICompositeType>(md)) {
 				if (a->getTag() == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
 				if (a->getTag() == dwarf::DW_TAG_structure_type)   { tags.push_back(a->getTag()); break; }
+				if (a->getTag() == dwarf::DW_TAG_union_type)       { tags.push_back(a->getTag()); break; }
 				if (a->getTag() == dwarf::DW_TAG_enumeration_type) { tags.push_back(a->getTag()); break; }
 				Metadata *next = a->getBaseType();
 				if (next == nullptr)  { break; } // no basetype property here, bailing
@@ -482,16 +483,14 @@ namespace {
 		// also, anonymous structs are also going to show up as 'struct void'. Passing anonymous
 		// structs or pointer to structs is not possible in C so end-user will probably have to fix his code
 		// to prevent such things from happening.
-		if (type->getName().size() == 0) { 
-			if (tags.size() != 0 && tags[0] == dwarf::DW_TAG_structure_type) { typestr += "AnonymousFIXME "; }
-			else { typestr += "void "; }; 
-		}
+		if (type->getName().size() == 0) { typestr += "void "; }
 		else { typestr += type->getName().str() + " "; }
 
 		for (unsigned& t: tags) {
 			switch (t) {
 				case dwarf::DW_TAG_pointer_type:     { typestr += "*"; 			      break; }
 				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
+				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr; break; }
 				case dwarf::DW_TAG_enumeration_type: { typestr = "enum " + typestr;   break; }
 				case dwarf::DW_TAG_typedef:          { 							    ; break; }
 				case dwarf::DW_TAG_const_type:       { typestr += "const ";           break; }
