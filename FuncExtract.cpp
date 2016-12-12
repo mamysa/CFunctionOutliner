@@ -298,7 +298,6 @@ namespace {
 
 
 	static void analyzeOperands(Instruction *I, 
-								const DenseSet<BasicBlock *>& predecessors,
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
 								DenseSet<Value *>& outputargs,
@@ -322,17 +321,12 @@ namespace {
 				if (isArgument(instr)) {
 					inputargs.insert(instr);
 				}
-				// first we check if source instruction is allocated outside the region,
-				// in one of the predecessor basic blocks. We do not care if the instruction 
-				// is actually used (stored into, etc), if we did that would cause problems 
-				// for stack-allocated arrays as those can be uninitialized.
-				if (predecessors.find(instr->getParent()) != predecessors.end()) {
-					if (!declaredInArea(M, regionBounds)) {
-						inputargs.insert(instr);
-					}
-				} 
-				// if instruction is used by some instruction is successor basic block, we add 
-				// it to the output argument list only if I is store, i.e. we modify it. 
+				// is source instruction is allocated and declared outside the region? 
+				if (!declaredInArea(M, regionBounds)) {
+					inputargs.insert(instr);
+				}
+				// if source instruction is used by some instruction is some successor basic block, 
+				// and it is defined inside the region, add it to output list.
 				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
 					Instruction *userinstr = cast<Instruction>(*userit);	
 					BasicBlock *parentBB = userinstr->getParent(); 
@@ -424,7 +418,7 @@ namespace {
 				md = next; 
 				continue;
 			}
-
+ 
 			if (auto a = dyn_cast<DIDerivedType>(md)) {
 				if (a->getTag() == dwarf::DW_TAG_pointer_type) { tags.push_back(a->getTag()); }
 				if (a->getTag() == dwarf::DW_TAG_const_type  ) { tags.push_back(a->getTag()); }
@@ -477,6 +471,7 @@ namespace {
 		// everything else is done below
 		// do not insert space when we are not adding anything else...
 		// also, we are not expecting values to be of type void, so type->getName should not be empty.
+		// TODO we might not need the following condition 
 		if (tags.size() == 0) { return std::pair<std::string, bool>(type->getName().str(), false);  }
 
 		// void things are just empty, gotta fix that.
@@ -523,6 +518,14 @@ namespace {
 		out << XMLElement("type", kv.first , 2);
 		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
 		if   (kv.second) { out << XMLElement("isfunptr", true, 2); }
+
+		// variable is static. 
+		if (auto *a = dyn_cast<GlobalVariable>(V)) {
+			if (!a->isConstant() && a->hasInternalLinkage()) {
+				out << XMLElement("isstatic", true, 2);	
+			}
+		}
+
 		out << XMLClosingTag("variable", 1);
 
 		errs() << kv.first << "\n";
@@ -551,6 +554,7 @@ namespace {
 				return false;
 			}
 
+
 			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
@@ -565,10 +569,12 @@ namespace {
 
 			DenseSet<Value *> inputargs;
 			DenseSet<Value *> outputargs;
+
+			
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				analyzeOperands(I, predecessors, successors, inputargs, outputargs, regionBounds, functionBounds);
+				analyzeOperands(I, successors, inputargs, outputargs, regionBounds, functionBounds);
 				analyzeConstants(I, false, inputargs, regionBounds, constants);
 			}
 
