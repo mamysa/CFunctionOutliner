@@ -9,6 +9,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -142,39 +143,29 @@ namespace {
 		return nullptr;
 	}
 	
-	static void readBBListFile(StringMap<DenseSet<StringRef>>& F, 
-										  const std::string filename) {
+	// reads list of <functionname, regionname> from the file into the map.
+	static void readRegionFile(StringMap<StringSet<>>& S, const std::string& filename) {
 		std::ifstream stream;
 		stream.open(filename);
 
-		std::string tempstr;
-		StringRef   current;
+		std::string temp;
+		while (!stream.eof()) {
+			// remove whitespace from the string
+			std::getline(stream, temp);
+			std::string::iterator n = std::remove_if(temp.begin(), temp.end(), 
+				  [](char c) { return std::isspace(static_cast<unsigned char >(c)); });
+			temp.erase(n, temp.end());
 
-		while (!stream.eof()) { 
-			std::getline(stream, tempstr);
-			if (tempstr.length() == 0) { continue; }
+			size_t idx = temp.find(':');
+			if (idx == std::string::npos) { continue; }
+			std::string lhs = temp.substr(0, idx);
+			std::string rhs = temp.substr(idx + 1, temp.length());
 
-			// for some reason i cannot store std::string inside llvm data structures (doesn't compile)
-			// so i have to create stringrefs....
-			// string does not have to be null-terminated for stringref to work
-			char *buf = new char[tempstr.length()];
-			std::memcpy(buf, tempstr.c_str(), tempstr.length()); 
-			StringRef str(buf, tempstr.length());
-			str = str.trim();
+			std::pair<std::string, StringSet<>> kv(rhs, StringSet<>());
+			S.insert(kv);
 
-			if (tempstr.find("!") == 0) {
-				str = str.ltrim("!");
-				std::pair<StringRef, DenseSet<StringRef>> kv(str, DenseSet<StringRef>());
-				F.insert(kv);
-				current = str;
-			} else {
-				auto it = F.find(current);
-				if (it == F.end()) { 
-					errs() << "Found basic block without parent\n"; 
-					continue; 
-				}
-				(*it).getValue().insert(str);
-			}
+			StringSet<>& lst = S.find(rhs)->getValue();;
+			lst.insert(lhs);
 		}
 
 		stream.close();
@@ -527,7 +518,6 @@ namespace {
 		}
 
 		out << XMLClosingTag("variable", 1);
-
 		errs() << kv.first << "\n";
 	}
 
@@ -541,10 +531,13 @@ namespace {
 	struct FuncExtract : public RegionPass {
 		static char ID;
 		FuncExtract() : RegionPass(ID) {  }
-		StringMap<DenseSet<StringRef>> funcs;
+		StringMap<StringSet<>> regionlist;
 
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
-			if (!isTargetRegion(R, funcs)) { return false; }
+			return false;
+
+			errs() << R->getNameStr() <<"\n";
+			//if (!isTargetRegion(R, funcs)) { return false; }
 
 			errs() << "Found region!\n";
 			
@@ -620,21 +613,14 @@ namespace {
 			static bool read = false;
 			if (read != 0) { return false; }
 			read = 1;
-			readBBListFile(funcs, BBListFilename);
-			errs() << "done reading\n";
-			return false;	
-		}
+			readRegionFile(regionlist, BBListFilename);
+			for (auto& v: regionlist) {
+				errs() << v.getKey() << "\n";
+				for (auto& k: v.second) {
+					errs() << k.getKey() << "\n";
 
-		bool doFinalization(void) override {
-			//errs() << "Cleaning up!\n";
-			// TODO delete buffers used by StringRefs
-			for (auto it = funcs.begin(); it != funcs.end(); ++it) {
-				//delete[] (*it).first().data();	
-				DenseSet<StringRef>& set = it->getValue();
-				for (auto b = set.begin(); b != set.end(); ++b) {
-					//delete[] b->data();
 				}
-
+				errs() <<"\n";
 			}
 			return false;	
 		}
