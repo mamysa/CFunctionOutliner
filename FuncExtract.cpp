@@ -70,6 +70,21 @@ namespace {
 		return stream.str();
 	}
 
+	// returns true if current function and and the region can be found in the region list.
+	static bool inRegionList(StringMap<StringSet<>>& SM, Function *F, Region *R) {
+		// remove spaces from region name 
+		std::string regionname = R->getNameStr();
+		std::string::iterator n = std::remove_if(regionname.begin(), regionname.end(), 
+			  [](char c) { return std::isspace(static_cast<unsigned char >(c)); });
+		regionname.erase(n, regionname.end());
+
+		const auto& it = SM.find(regionname);
+		if (it == SM.end()) { return false; }
+		const StringSet<>& funclist = it->getValue(); 
+		if (funclist.find(F->getName()) == funclist.end()) { return false; }
+		return true;
+	}
+
 	static AreaLoc getRegionLoc(const Region *R) {
 		unsigned min = std::numeric_limits<unsigned>::max();
 		unsigned max = std::numeric_limits<unsigned>::min();
@@ -103,7 +118,6 @@ namespace {
 		return AreaLoc(min, max); 
 	}
 
-	
 	// we need line numbers exiting basic blocks to determine what kind of 
 	// branching we have there. In case if those lines of code contain goto/return,
 	// we have to do some extra work...
@@ -166,28 +180,11 @@ namespace {
 
 			StringSet<>& lst = S.find(rhs)->getValue();;
 			lst.insert(lhs);
+			errs() << rhs <<"\n";
 		}
 
 		stream.close();
 	}
-
-	//@return returns true if the current region is the one we are looking for.
-	// we are expecting the first label to be the function name prefixed with ! symbol.
-	static bool isTargetRegion(const Region *R, const StringMap<DenseSet<StringRef>>& regionlabels) {
-		Function *F = R->getEntry()->getParent();
-		auto fnit = regionlabels.find(F->getName());
-		if (fnit == regionlabels.end()) { return false; }
-		const DenseSet<StringRef>& blocks = fnit->getValue();
-
-		int numblocks = 0;
-		for (auto it = R->block_begin(); it != R->block_end(); ++it) {
-			if (blocks.find(it->getName()) == blocks.end()) { return false; }
-			numblocks++;
-		}
-
-		return (numblocks == (int)blocks.size());
-	}
-
 
 	// one of the problems is detecting const ints/floats. while llvm ir
 	// creates storage for such entities, they are not used anywhere as 
@@ -527,26 +524,24 @@ namespace {
 		out << XMLElement("end",  loc.second, 2);
 		out << XMLClosingTag(tag, 1); 
 	}
-										 
+
+											 
 	struct FuncExtract : public RegionPass {
 		static char ID;
-		FuncExtract() : RegionPass(ID) {  }
 		StringMap<StringSet<>> regionlist;
+		
+		FuncExtract() : RegionPass(ID) { readRegionFile(regionlist, BBListFilename); }
+		~FuncExtract(void) { }
 
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
-			return false;
-
-			errs() << R->getNameStr() <<"\n";
-			//if (!isTargetRegion(R, funcs)) { return false; }
-
-			errs() << "Found region!\n";
-			
+			// we really shouldn't try to extract from modules with no metadata...
 			Function *F = R->getEntry()->getParent();
-			if (!F->hasMetadata() || !isa<DISubprogram>(F->getMetadata(0))) { 
+			if (!F->hasMetadata()) { 
 				errs() << "Function is missing debug metadata, skipping...\n";
 				return false;
 			}
 
+			if (!inRegionList(regionlist, F, R)) { return false; }
 
 			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
 			AreaLoc regionBounds = getRegionLoc(R);
@@ -605,28 +600,6 @@ namespace {
 			for (Value *V: outputargs) { V->dump(); }
 
 			return false;
-		}
-
-
-		bool doInitialization(Region *R, RGPassManager &RGM) override {
-			//TODO we should probably initialize this in the constructor?
-			static bool read = false;
-			if (read != 0) { return false; }
-			read = 1;
-			readRegionFile(regionlist, BBListFilename);
-			for (auto& v: regionlist) {
-				errs() << v.getKey() << "\n";
-				for (auto& k: v.second) {
-					errs() << k.getKey() << "\n";
-
-				}
-				errs() <<"\n";
-			}
-			return false;	
-		}
-
-		~FuncExtract(void) {
-			errs() << "Hello I am your destructor!\n";
 		}
 	};
 }
