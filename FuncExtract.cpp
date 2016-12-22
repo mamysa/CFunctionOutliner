@@ -85,6 +85,29 @@ namespace {
 		return true;
 	}
 
+	// generates the filename for the xml file output of the pass will be written to.
+	// follows the following format: functionname_startregion_endregion
+	static std::string generateFilename(Function *F, Region *R) {
+		std::string funcname =  F->getName().str();
+
+#define NUMNAMES 2
+		std::string sname = R->getEntry()->getName().str();;
+		std::string ename = "fnend";
+		if (R->getExit()) { ename= R->getExit()->getName().str(); }
+
+		std::string blocknames[NUMNAMES] = { sname, ename };
+
+		for (std::string& s: blocknames) {
+			std::string::iterator n = std::remove_if(s.begin(), s.end(), [](char c) { return c == '.'; });
+			s.erase(n, s.end());
+		}
+#undef NUMNAMES
+
+		return funcname + '_' + blocknames[0] + '_'  + blocknames[1];
+	}
+
+
+
 	// line numbers provided by debug are not accurate enough and sometimes it misses the lines 
 	// that are inside the region. We pick the maximal linenumber of predecessor of entry basic block
 	// as region's starting linenum.
@@ -92,15 +115,15 @@ namespace {
 		unsigned min = std::numeric_limits<unsigned>::max();
 		unsigned max = std::numeric_limits<unsigned>::min();
 
-		for (BasicBlock *BB: R->blocks()) {
-			for (Instruction& I: BB->getInstList()) {
-				const DebugLoc& x = I.getDebugLoc(); 
-				if (x) {
-					min = std::min(min, x.getLine());
-					max = std::max(max, x.getLine());
-				}
+		for (BasicBlock *BB: R->blocks()) 
+		for (Instruction& I: BB->getInstList()) {
+			const DebugLoc& x = I.getDebugLoc(); 
+			if (x) {
+				min = std::min(min, x.getLine());
+				max = std::max(max, x.getLine());
 			}
 		}
+#if 0
 		// look at the predecessors of entry basic block and find the greatest line number there.
 		BasicBlock *first = R->getEntry();
 		unsigned localmax = std::numeric_limits<unsigned>::min();
@@ -113,6 +136,7 @@ namespace {
 
 		// set new min only if localmax has been initialized.
 		if (localmax != std::numeric_limits<unsigned>::min()) { min = std::min(localmax, min); }
+#endif
 
 		return std::pair<unsigned,unsigned>(min, max);
 	}
@@ -632,6 +656,7 @@ namespace {
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
 			removeOwnBlocks(predecessors, R);
+			std::string outfilename = generateFilename(F, R);
 
 			DenseSet<BasicBlock *> successors = DFSBasicBlocks(b, pushSuccessors);
 			removeOwnBlocks(successors, R);
@@ -655,9 +680,9 @@ namespace {
 				//analyzeConstants(I, true, outputargs, regionBounds, constants);
 			}
 
-			std::ofstream outfile;
-			outfile.open(OutXMLFilename, std::ofstream::out);
 			//writing stuff in xml-like format
+			std::ofstream outfile;
+			outfile.open(outfilename + ".xml", std::ofstream::out);
 			outfile << XMLOpeningTag("extractinfo", 0);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
@@ -670,6 +695,7 @@ namespace {
 			// dump region exit locs
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
 			outfile << XMLElement("funcreturntype", getFunctionReturnType(F), 1);
+			outfile << XMLElement("funcname", outfilename, 1);
 			errs() << "fnreturntype: " << getFunctionReturnType(F) << "\n";
 
 
