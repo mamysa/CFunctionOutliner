@@ -85,18 +85,34 @@ namespace {
 		return true;
 	}
 
+	// line numbers provided by debug are not accurate enough and sometimes it misses the lines 
+	// that are inside the region. We pick the maximal linenumber of predecessor of entry basic block
+	// as region's starting linenum.
 	static AreaLoc getRegionLoc(const Region *R) {
 		unsigned min = std::numeric_limits<unsigned>::max();
 		unsigned max = std::numeric_limits<unsigned>::min();
-		
-		for (auto blockIter = R->block_begin(); blockIter != R->block_end(); ++blockIter) 
-		for (auto instrIter = (*blockIter)->begin(); instrIter != (*blockIter)->end(); ++instrIter) {
-			const DebugLoc& x = instrIter->getDebugLoc(); 
-			if (x) {
-				min = std::min(min, x.getLine());
-				max = std::max(max, x.getLine());
+
+		for (BasicBlock *BB: R->blocks()) {
+			for (Instruction& I: BB->getInstList()) {
+				const DebugLoc& x = I.getDebugLoc(); 
+				if (x) {
+					min = std::min(min, x.getLine());
+					max = std::max(max, x.getLine());
+				}
 			}
 		}
+		// look at the predecessors of entry basic block and find the greatest line number there.
+		BasicBlock *first = R->getEntry();
+		unsigned localmax = std::numeric_limits<unsigned>::min();
+		for (auto it = pred_begin(first); it != pred_end(first); ++it) {
+			for (Instruction& I: (*it)->getInstList()) {
+				const DebugLoc& x = I.getDebugLoc(); 
+				if (x) { localmax = std::max(localmax, x.getLine()); }
+			}
+		}
+
+		// set new min only if localmax has been initialized.
+		if (localmax != std::numeric_limits<unsigned>::min()) { min = std::min(localmax, min); }
 
 		return std::pair<unsigned,unsigned>(min, max);
 	}
@@ -226,6 +242,7 @@ namespace {
 			visited.insert(current);
 
 			if (ConstantExpr *constexp = dyn_cast<ConstantExpr>(current)) {
+				//Instruction *BB = constexp->getAsInstruction();
 				for (auto it = constexp->op_begin(); it != constexp->op_end(); ++it) {
 					if (auto globl = dyn_cast<GlobalVariable>(*it)) { stack.push_back(globl); }
 				}
@@ -285,6 +302,65 @@ namespace {
 	}
 
 
+	static void findInputs(Instruction *I, 
+						   const AreaLoc& funcloc, 
+						   const AreaLoc& regionloc,
+						   DenseSet<Value *>& arglist) {
+		static DenseSet<Value *> previous;
+		DenseSet<Value *> sources = DFSInstruction(I);	
+		for (Value *V: sources) {
+			// we don't have to look at values we have seen before... 
+			if (previous.find(V) != previous.end()) { continue; }
+			previous.insert(V);
+
+			Metadata *M = getMetadata(V);
+			if (!M) { continue; }
+
+			if (auto *instr = dyn_cast<AllocaInst>(V)) {
+				if (isArgument(instr))             { arglist.insert(instr); }
+				if (!declaredInArea(M, regionloc)) { arglist.insert(instr); }
+			}
+
+			// globals must de declared inside the function.
+			if (auto *globl = dyn_cast<GlobalVariable>(V)) {
+				if (declaredInArea(M, funcloc) && !declaredInArea(M, regionloc)) { 
+					errs() << regionloc.first << " " << regionloc.second << "\n";
+					arglist.insert(globl); 
+				}
+			}
+		}
+	}
+
+	static void findOutputs(Instruction *I, 
+						    const AreaLoc& funcloc, 
+						    const AreaLoc& regionloc,
+						    DenseSet<Value *>& arglist) {
+		static DenseSet<Value *> previous;
+		DenseSet<Value *> sources = DFSInstruction(I);	
+		for (Value *V: sources) {
+			// we don't have to look at values we have seen before... 
+			if (previous.find(V) != previous.end()) { continue; }
+			previous.insert(V);
+
+			Metadata *M = getMetadata(V);
+			if (!M) { continue; }
+			if (auto *instr = dyn_cast<AllocaInst>(V)) {
+				if (declaredInArea(M, regionloc) && !isArgument(instr)) { 
+					arglist.insert(instr); 
+				}
+			}
+
+			// globals must de declared inside the function.
+			if (auto *globl = dyn_cast<GlobalVariable>(V)) {
+				if (declaredInArea(M, funcloc) && declaredInArea(M, regionloc)) { 
+					arglist.insert(globl); 
+				}
+			}
+		}
+	}
+
+
+#if 0
 	static void analyzeOperands(Instruction *I, 
 								const DenseSet<BasicBlock *>& successors,
 								DenseSet<Value *>& inputargs, 
@@ -329,7 +405,9 @@ namespace {
 			// constants defined in functions such as structs/arrays are declared in the global scope now. 
 			if (auto globl = dyn_cast<GlobalVariable>(*it)) {
 				// if the global is defined in the function but not in the region, then it is an input 
-				// argument. If it is defined in region, it is also an output argument.
+				// argument. If it is defined in region, it is also an output argument.  Outputs are not 
+				// precise since  we cannot see in which basic blocks ConstantExprs are used since 
+				// getAsInstruction() results in "Global is referenced by parentless instruction" error. 
 				if (declaredInArea(M, functionBounds)) {
 					if (!declaredInArea(M, regionBounds)) { inputargs.insert(globl);  }
 					if ( declaredInArea(M, regionBounds)) { outputargs.insert(globl); }
@@ -337,6 +415,7 @@ namespace {
 			}
 		}
 	}
+#endif
 
 	// basic type constants (i.e. int / floats) have to be checked separately.
 	// Every constant that has the same constant value and are used in the region
@@ -364,6 +443,7 @@ namespace {
 			}
 		}
 	}
+
 
 	// compares M's line parameter to AreaLoc, returns true if number is between.
 	static bool declaredInArea(Metadata *M, const AreaLoc& A) {
@@ -536,6 +616,7 @@ namespace {
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
 			// we really shouldn't try to extract from modules with no metadata...
 			Function *F = R->getEntry()->getParent();
+			errs() << R->getNameStr() << "\n";
 			if (!F->hasMetadata()) { 
 				errs() << "Function is missing debug metadata, skipping...\n";
 				return false;
@@ -562,14 +643,16 @@ namespace {
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				analyzeOperands(I, successors, inputargs, outputargs, regionBounds, functionBounds);
-				analyzeConstants(I, false, inputargs, regionBounds, constants);
+				findInputs(I, functionBounds, regionBounds, inputargs); 
+				//analyzeOperands(I, successors, inputargs, outputargs, regionBounds, functionBounds);
+				//analyzeConstants(I, false, inputargs, regionBounds, constants);
 			}
 
 			for (auto blockit = successors.begin(); blockit != successors.end(); ++blockit) 
 			for (auto instrit = (*blockit)->begin(); instrit != (*blockit)->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				analyzeConstants(I, true, outputargs, regionBounds, constants);
+				findOutputs(I, functionBounds, regionBounds, outputargs); 
+				//analyzeConstants(I, true, outputargs, regionBounds, constants);
 			}
 
 			std::ofstream outfile;
