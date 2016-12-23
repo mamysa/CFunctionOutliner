@@ -5,22 +5,25 @@ import xml.etree.cElementTree as ET
 # small test runner. 
 # Since FuncExtract pass outputs XML, we need a separate program to compare actual output XML
 # with expected XML
-#OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
-OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null &> /dev/null'
+OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
+#OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null &> /dev/null'
 CLANG = 'clang -emit-llvm -S -O0 -g %s -o %s'
-tempfiles = ['.temp/', 'out.ll', 'out.xml'] 
+tempfiles = ['.temp/', 'out.ll'] 
 
 
-TESTCASES = [
-'fn-pointer-1/',     'main.c', 'region.txt', 'expected.xml', 
-'fn-pointer-2/',     'main.c', 'region.txt', 'expected.xml',
-'fn-pointer-3/',     'main.c', 'region.txt', 'expected.xml', 
-'fn-pointer-const/', 'main.c', 'region.txt', 'expected.xml',
-'fn-pointer-typedef/', 'main.c', 'region.txt', 'expected.xml',
-'type-primitive-1/', 'main.c', 'region.txt', 'expected.xml',
-'type-primitive-const-1/', 'main.c', 'region.txt', 'expected.xml',
-'type-primitive-const-2/', 'main.c', 'region.txt', 'expected.xml',
-
+TESTFILES = [
+#'fn-pointer-1/',     'main.c', 'region.txt', 'expected.xml', 
+#'fn-pointer-2/',     'main.c', 'region.txt', 'expected.xml',
+#'fn-pointer-3/',     'main.c', 'region.txt', 'expected.xml', 
+#'fn-pointer-const/', 'main.c', 'region.txt', 'expected.xml',
+#'fn-pointer-typedef/', 'main.c', 'region.txt', 'expected.xml',
+#'type-primitive-1/', 'main.c', 'region.txt', 'expected.xml',
+#'type-primitive-const-1/', 'main.c', 'region.txt', 'expected.xml',
+#'type-primitive-const-2/', 'main.c', 'region.txt', 'expected.xml',
+#'type-union-local/', 'main.c', 'region.txt', 'expected.xml',
+#'input-output-basic-1/', 'main.c', 'region.txt', 'expected.xml',
+#'input-output-basic-2/', 'main.c', 'region.txt', 'expected.xml',
+'input-output-struct-const-1/', 'main.c', 'region.txt',
 
 #'type-struct-local/'      , 'main.c'      , 'region.txt', 'expected.xml',
 #'type-struct-global/'      , 'main.c'      , 'region.txt', 'expected.xml',
@@ -40,6 +43,13 @@ TESTCASES = [
 #'type-primitive-const-1/', 'main.c', 'region.txt', 'expected.xml', ''
 #'fn-arg-const-basic/', 'main.c', 'region.txt', 'expected.xml',
 ]
+
+TESTCASES = {
+    'input-output-struct-const-1/': ['test1_ifend_ifend13.xml', 
+                                     'test2_ifend_ifend14.xml', 
+                                     'test3_ifend_ifend14.xml', 
+                                     'test4_ifend_ifend14.xml'], 
+}
 
 ## reads variable info from XML. expects to have both name and type. 
 def xmlgetvariableinfo(filepath):
@@ -69,29 +79,32 @@ def cmpvars(source, expect, actual):
 def runtests():
     subprocess.call(['rm', '-rf', tempfiles[0]]) #remove temp dir
     subprocess.call(['mkdir', tempfiles[0]]) ##mkdir temp directory
-    for i in range(0, len(TESTCASES), 4):
-        source   = TESTCASES[i] + TESTCASES[i+1]
-        region   = TESTCASES[i] + TESTCASES[i+2]
-        expected = TESTCASES[i] + TESTCASES[i+3]
-        outsrc   = tempfiles[0] + tempfiles[1]
-        outxml   = tempfiles[0] + tempfiles[2]
+    for i in range(0, len(TESTFILES), 3):
+        source = TESTFILES[i] + TESTFILES[i+1]
+        region = TESTFILES[i] + TESTFILES[i+2]
+        outsrc = tempfiles[0] + tempfiles[1]
+        outdir = tempfiles[0]
 
         ## gotta confirm those files exist...
-        if not os.path.isfile(source):   raise Exception(source   + ' missing, exiting')
-        if not os.path.isfile(region):   raise Exception(region   + ' missing, exiting')
-        if not os.path.isfile(expected): raise Exception(expected + ' missing, exiting')
+        if not os.path.isfile(source): raise Exception(source   + ' missing, exiting')
+        if not os.path.isfile(region): raise Exception(region   + ' missing, exiting')
 
         #compile to llvm ir
         clangcmd = CLANG % (source, outsrc)
         subprocess.call(clangcmd, shell=True)
 
         # run opt pass
-        optcmd = OPT % (region, outxml, outsrc)
+        optcmd = OPT % (region, tempfiles[0], outsrc)
         subprocess.call(optcmd, shell=True)
 
-        expect = xmlgetvariableinfo(expected);
-        actual = xmlgetvariableinfo(outxml)
+        testcases = TESTCASES[TESTFILES[i]]
+        for case in testcases:
+            outxml = tempfiles[0] + case
+            corxml = TESTFILES[0] + case
 
-        sys.stdout.write(cmpvars(source, expect, actual))
+            expect = xmlgetvariableinfo(corxml);
+            actual = xmlgetvariableinfo(outxml)
+
+            sys.stdout.write(cmpvars(source+':'+case, expect, actual))
 
 runtests()
