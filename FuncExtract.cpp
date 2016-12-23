@@ -29,9 +29,9 @@ static cl::opt<std::string> BBListFilename("bblist",
 	   		cl::desc("List of blocks' labels that are to be extracted. Must form a valid region."), 
 	   		cl::value_desc("filename"), cl::Required  );
 
-static cl::opt<std::string> OutXMLFilename("out", 
+static cl::opt<std::string> OutDirectory("out", 
 	   		cl::desc("Name of the file to info to."), 
-	   		cl::value_desc("filename"), cl::Required  );
+	   		cl::value_desc("outputdirectory"), cl::Required  );
 
 namespace {
 
@@ -329,6 +329,7 @@ namespace {
 	static void findInputs(Instruction *I, 
 						   const AreaLoc& funcloc, 
 						   const AreaLoc& regionloc,
+						   const DenseSet<ValuePair>& constants,
 						   DenseSet<Value *>& arglist) {
 		static DenseSet<Value *> previous;
 		DenseSet<Value *> sources = DFSInstruction(I);	
@@ -348,8 +349,20 @@ namespace {
 			// globals must de declared inside the function.
 			if (auto *globl = dyn_cast<GlobalVariable>(V)) {
 				if (declaredInArea(M, funcloc) && !declaredInArea(M, regionloc)) { 
-					errs() << regionloc.first << " " << regionloc.second << "\n";
 					arglist.insert(globl); 
+				}
+			}
+		}
+
+
+		// finally, primitive constants such as floats and ints have to be checked separately.
+		for (Value *V : I->operands()) {
+			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
+			for (const ValuePair& constant: constants) {
+				if (constant.first == V) {
+					Metadata *M = getMetadata(constant.second); // get alloca instruction info;
+					if (!M) { continue; }
+					if (!declaredInArea(M, regionloc)) { arglist.insert(constant.second); }
 				}
 			}
 		}
@@ -358,6 +371,7 @@ namespace {
 	static void findOutputs(Instruction *I, 
 						    const AreaLoc& funcloc, 
 						    const AreaLoc& regionloc,
+						    const DenseSet<ValuePair>& constants,
 						    DenseSet<Value *>& arglist) {
 		static DenseSet<Value *> previous;
 		DenseSet<Value *> sources = DFSInstruction(I);	
@@ -374,10 +388,21 @@ namespace {
 				}
 			}
 
-			// globals must de declared inside the function.
+			// globals (const qualified structures) must de declared inside the function.
 			if (auto *globl = dyn_cast<GlobalVariable>(V)) {
 				if (declaredInArea(M, funcloc) && declaredInArea(M, regionloc)) { 
 					arglist.insert(globl); 
+				}
+			}
+		}
+
+		for (Value *V : I->operands()) {
+			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
+			for (const ValuePair& constant: constants) {
+				if (constant.first == V) {
+					Metadata *M = getMetadata(constant.second); // get alloca instruction info;
+					if (!M) { continue; }
+					if (declaredInArea(M, regionloc)) { arglist.insert(constant.second); }
 				}
 			}
 		}
@@ -668,24 +693,24 @@ namespace {
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				findInputs(I, functionBounds, regionBounds, inputargs); 
-				//analyzeOperands(I, successors, inputargs, outputargs, regionBounds, functionBounds);
+				findInputs(I, functionBounds, regionBounds, constants, inputargs); 
 				//analyzeConstants(I, false, inputargs, regionBounds, constants);
 			}
 
 			for (auto blockit = successors.begin(); blockit != successors.end(); ++blockit) 
 			for (auto instrit = (*blockit)->begin(); instrit != (*blockit)->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				findOutputs(I, functionBounds, regionBounds, outputargs); 
+				findOutputs(I, functionBounds, regionBounds, constants, outputargs); 
 				//analyzeConstants(I, true, outputargs, regionBounds, constants);
 			}
 
 			//writing stuff in xml-like format
 			std::ofstream outfile;
-			outfile.open(outfilename + ".xml", std::ofstream::out);
+			outfile.open(OutDirectory + outfilename + ".xml", std::ofstream::out);
 			outfile << XMLOpeningTag("extractinfo", 0);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
+			errs() << OutDirectory << "\n";
 
 			// dump variable info...
 			for (Value *V : inputargs)  { writeVariableInfo(V, false, outfile); }
