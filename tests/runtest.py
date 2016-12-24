@@ -18,12 +18,14 @@ TESTFILES = [
 #'fn-pointer-const/', 'main.c', 'region.txt', 'expected.xml',
 #'fn-pointer-typedef/', 'main.c', 'region.txt', 'expected.xml',
 #'type-primitive-1/', 'main.c', 'region.txt', 'expected.xml',
-#'type-primitive-const-1/', 'main.c', 'region.txt', 'expected.xml',
-#'type-primitive-const-2/', 'main.c', 'region.txt', 'expected.xml',
 #'type-union-local/', 'main.c', 'region.txt', 'expected.xml',
 #'input-output-basic-1/', 'main.c', 'region.txt', 'expected.xml',
 #'input-output-basic-2/', 'main.c', 'region.txt', 'expected.xml',
-'input-output-struct-const-1/', 'main.c', 'region.txt',
+
+#'input-output-struct-const-1/', 'main.c', 'regions.txt',
+#'type-primitive-const-1/', 'main.c', 'region.txt',
+'basic-const-1/', 'main.c', 'region.txt',
+
 
 #'type-struct-local/'      , 'main.c'      , 'region.txt', 'expected.xml',
 #'type-struct-global/'      , 'main.c'      , 'region.txt', 'expected.xml',
@@ -49,7 +51,13 @@ TESTCASES = {
                                      'test2_ifend_ifend14.xml', 
                                      'test3_ifend_ifend14.xml', 
                                      'test4_ifend_ifend14.xml'], 
+
+    'basic-const-1/':      ['test1_forcond_forend.xml',
+                            'test2_ifend_ifend7.xml'  ,
+                            'test3_ifend_ifend7.xml'  ,
+                            'test4_ifend_ifend8.xml'  ],
 }
+
 
 ## reads variable info from XML. expects to have both name and type. 
 def xmlgetvariableinfo(filepath):
