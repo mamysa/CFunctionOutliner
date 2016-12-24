@@ -2,3 +2,4 @@ test1: for.cond => for.end
 test2: if.end => if.end7
 test3: if.end => if.end7
 test4: if.end => if.end8
+test5: if.end => if.end8

@@ -80,3 +80,21 @@ int test4(void) {
 
 	return out;
 }
+
+// constants that are cast are not not detected. 
+// input: myconstant_1, myconstant_2, out
+int test5(void) {
+	int out = 0;
+	const int myconstant_1 = 12; 
+	const int myconstant_2 = 14; 
+
+	if (out == 30) { out += myconstant_1; }
+	else { out += myconstant_2; }
+
+//region start
+	if (out == 20) { out += myconstant_1; }
+	else { out += (float)myconstant_2; }
+//region end
+
+	return out;
+}
