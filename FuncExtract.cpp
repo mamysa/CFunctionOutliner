@@ -354,7 +354,6 @@ namespace {
 			}
 		}
 
-
 		// finally, primitive constants such as floats and ints have to be checked separately.
 		for (Value *V : I->operands()) {
 			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
