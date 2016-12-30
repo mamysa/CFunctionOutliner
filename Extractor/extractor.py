@@ -2,29 +2,131 @@ import sys
 import re
 import xml.etree.cElementTree as ET
 
-#GLOBALS these are very very ... very important. Otherwise they wouldn't be globals... ;) 
-reginfo = None
-funinfo = None
-regloc = {}
-funloc = {} 
-funrettype = 'UNKNOWN'   
-special_exitlocs = []
+class FileInfo:
+    def __init__(self):
+        self.funinfo = None  ## starting ending linenumbers of a function
+        self.reginfo = None  ## starting ending linenumbers of a regioon
+        self.funloc = {} 
+        self.regloc = {}     ## actual lines for both region and a function
+        self.exitlocs = []   ## line numbers corresponding to exiting edges of the region.
+        self.vars = []       ## variable list
+        self.funrettype = "" ## return type of the function
+        self.funname = ""    ## name of the extracted function
+
+    # in case if region starts with the same line as the function we are extracting from, 
+    # it means that function header is also a part of a region and has to be separated from 
+    # function body.
+    # This is done by grabbing everything up to and including the first opening brace and updating
+    # region bounds accordingly.
+    def try_separate_func_header(self):
+        # nothing to do here bailing
+        if self.reginfo.start != self.funinfo.start: return
+
+        for i in range(self.reginfo.start, self.reginfo.end + 1):
+            n = self.regloc[i].count('{')
+            if n != 0: 
+                #ensure that we don't have anything following the opening brace. 
+                assert(self.regloc[i].split('{')[1].rstrip(' \n') == '')
+                self.funloc[i] = self.regloc[i]
+                del self.regloc[i]
+                self.reginfo.start = i + 1
+                break
+        assert(self.reginfo.start != self.reginfo.end)
+
+    # Extracted regions sometimes do not include a closing brace so we need to find the line that
+    # has it in the rest of the function. Assumes that closing brace is located on its own line.
+    # We are only expecting a single brace
+    def region_find_closing_brace(self):
+        numopeningbraces = 0
+        numclosingbraces = 0
+        for line in self.regloc.values():
+            ## remove literal strings / chars from the line. 
+            line = re.sub(r'\'(.)*\'', '', line, re.M | re.I)
+            line = re.sub(r'\"(\\.|[^"])*\"', '', line, re.M | re.I) 
+# count number of braces. braces are now expected to be balanced aside from the last one closing
+# off the region. 
+            numopeningbraces = numopeningbraces + line.count('{')
+            numclosingbraces = numclosingbraces + line.count('}')
+        # take the first line that has closing brace in it...
+        if numclosingbraces < numopeningbraces:
+            for i in range(self.reginfo.end + 1, self.funinfo.end): 
+                temp = self.funloc[i].lstrip(' \t')
+                temp = temp.rstrip(' \n')
+                # just an empty line
+                if len(temp) == 0:
+                    continue
+                #found an empty line with brace, use this.
+                if temp == '}':
+                    self.regloc[i] = self.funloc[i]
+                    del self.funloc[i] 
+                    self.reginfo.end = i;
+                    break
+                #line filled with something, we should stop
+                if len(temp) != 0:
+                    break
+
+    def function_add_closing_brace(self):
+        numopeningbraces = 0
+        numclosingbraces = 0
+        for key in sorted(self.funloc.keys()):
+            line = re.sub(r'\'(.)*\'', '', self.funloc[key], re.M | re.I)
+            line = re.sub(r'\"(\\.|[^"])*\"', '', line, re.M | re.I) 
+            numopeningbraces = numopeningbraces + line.count('{')
+            numclosingbraces = numclosingbraces + line.count('}')
+        if numclosingbraces < numopeningbraces:
+            self.funinfo.end = self.funinfo.end + 1
+            self.funloc[self.funinfo.end] = '}\n'
+
+    def extract(self):
+        function = Function(self.funname, self.funrettype)
+        for var in self.vars:
+            function.add_variable(var)
+
+        for loc in sorted(self.exitlocs):
+            function.check_exit_loc(self.regloc, loc)
+
+        sys.stdout.write(function.declare_return_type())
+        sys.stdout.write(function.get_fn_definition())
+        sys.stdout.write(function.define_return_value())
+        for num in sorted(self.regloc.keys()):
+            sys.stdout.write(self.regloc[num])
+        if len(function.special_out) == 0:
+            sys.stdout.write(function.store_retvals_and_return())
+        sys.stdout.write('}\n\n')
+
+        for i in range(self.funinfo.start, self.reginfo.start):
+            sys.stdout.write(self.funloc[i])
+        sys.stdout.write(function.get_fn_call())  
+        sys.stdout.write(function.restore_retvals()) ## if function is not void, restore all variables
+        for i in range(self.reginfo.end + 1, self.funinfo.end + 1):
+            sys.stdout.write(self.funloc[i])
+
+
+
 
 class LocInfo:
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+
+    def between(self, num):
+        return num >= self.start and num <= self.end
+
     @staticmethod
     def create(xml):
         start = xml.find('start')
         end = xml.find('end')
-        if start == None or start == None:
+        if start == None or end == None:
             raise Exception("Missing region info.") 
 
-        locinfo = LocInfo()
-        setattr(locinfo, 'start', int(start.text)) 
-        setattr(locinfo, 'end',   int(end.text)  ) 
+        locinfo = LocInfo(int(start.text), int(end.text))
         return locinfo 
 
     def __repr__(self):
         return '<LocInfo start:%s end:%s>' % (self.start, self.end)
+
+    def __eq__(self, other):
+        return self.start == other.start and self.end == other.end
 
 #######################################
 class Variable: 
@@ -68,14 +170,14 @@ class IfCondition:
         self.var  = var
         self.stmt = stmt
 
-
-class Function2:
-    def __init__(self):
+class Function:
+    def __init__(self, funname, funrettype):
         self.inputs = []
         self.outputs = []
         self.special_out = [] # for return / gotos within region. (see below)
 
-        self.funcname   = 'extracted' ## TODO user should be able to specify this
+        self.funname    = funname ## name of the extracted function
+        self.funrettype = funrettype ## return type of the original function
         self.retvalname = '%s_retval' ## name of the structure returned from the function
         self.retvaltype = 'struct %s_struct' ## type name of the structure returned from extracted function
 
@@ -85,17 +187,15 @@ class Function2:
         self.exitflagname  = '%s_flag_loc%s' 
         self.exitvaluename = '%s_value_loc%s'
 
-    ## add inputs / outputs to the function
-    def add_input(self, var):  
-        self.inputs.append(var)
-
-    def add_output(self, var): 
-        self.outputs.append(var)
+    ## TODO check for const qualified variables. 
+    def add_variable(self, var):
+        if not var.isoutput: self.inputs.append(var)
+        if var.isoutput: self.outputs.append(var)
 
     # replace return / goto statement in the region with setting flag to 1 and setting value to whatever
     # comes on the rhs of the return statement.
     # we expect return/goto statements formatted in a certain way.
-    def check_exit_loc(self, loc):
+    def check_exit_loc(self, regloc, loc):
         temp = regloc[loc]
         temp = temp.lstrip('\t ')
         temp = temp.rstrip('\n; ')
@@ -132,16 +232,17 @@ class Function2:
         args = '' 
         for var in self.inputs: args = args + var.as_argument() + ', '
         args = args.rstrip(', ') 
-        rett = self.retvaltype % (self.funcname)
-        return ('%s %s(%s) {\n') % (rett, self.funcname, args)
+        rett = self.retvaltype % (self.funname)
+        return ('%s %s(%s) {\n') % (rett, self.funname, args)
 
     ## returns correct function call string
     def get_fn_call(self):
         args = ''
         for var in self.inputs: args = args + var.name + ', '
         args = args.rstrip(', ') 
-        rett = self.retvalname % (self.funcname)
-        return ('%s = %s(%s);\n') % (rett, self.funcname, args)
+        retn = self.retvalname % (self.funname)
+        rett = self.retvaltype % (self.funname)
+        return ('%s %s = %s(%s);\n') % (rett, retn, self.funname, args)
 
     # have to also return input arguments. Passing inputs by pointer doesn't work in certain 
     # cases (like struct initializers) and results in UB.
@@ -154,14 +255,14 @@ class Function2:
             args = args + '\t' + cond.cond.as_argument() + ';\n'
             if (cond.stmt == 'return'): args = args + '\t' + cond.var.as_argument() + ';\n'
 
-        type = self.retvaltype % (self.funcname)
+        type = self.retvaltype % (self.funname)
         return '%s {\n%s};\n\n' % (type, args)
 
     # defines return value in the beginning of the extracted function and sets 
     # special return flags to 0 if those exist
     def define_return_value(self):
-        name = self.retvalname % (self.funcname)
-        type = self.retvaltype % (self.funcname)
+        name = self.retvalname % (self.funname)
+        type = self.retvaltype % (self.funname)
         out  = '\t%s %s;\n' % (type, name)
         
         for cond in self.special_out:
@@ -174,7 +275,7 @@ class Function2:
     # stores only inputs / outputs, special exits are handled separately
     def store_retvals_and_return(self):
         args = ''
-        rett = self.retvalname % (self.funcname)
+        rett = self.retvalname % (self.funname)
         for var in self.inputs:  args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
         for var in self.outputs: args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
         return '%sreturn %s;\n' % (args, rett)
@@ -183,7 +284,7 @@ class Function2:
     # define its time
     def restore_retvals(self):
         args = ''
-        rett = self.retvalname % (self.funcname)
+        rett = self.retvalname % (self.funname)
         for var in self.inputs:  args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
         for var in self.outputs: args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
 
@@ -192,7 +293,7 @@ class Function2:
         for cond in self.special_out:
             var = cond.var.name
             if cond.stmt == 'return': var = '%s.%s' % (rett, cond.var.name)
-            out = out + 'if (%s) { %s %s; }\n' % (cond.cond.name, cond.stmt, var)
+            out = out + 'if (%s.%s) { %s %s; }\n' % (rett, cond.cond.name, cond.stmt, var)
         return args + out;
 
         
@@ -200,13 +301,11 @@ def extract2(function):
     for loc in special_exitlocs:
         function.check_exit_loc(loc)
 
-    numbraces = 0 # we need to indent newly inserted lines
-
     sys.stdout.write(function.declare_return_type())
     sys.stdout.write(function.get_fn_definition())
     sys.stdout.write(function.define_return_value())
-    for line in regloc.values():
-        sys.stdout.write(line)
+    for num in sorted(regloc.keys()):
+        sys.stdout.write(regloc[num])
     if len(function.special_out) == 0:
         sys.stdout.write(function.store_retvals_and_return())
     sys.stdout.write('}\n\n')
@@ -219,33 +318,6 @@ def extract2(function):
         sys.stdout.write(funloc[i])
 
 
-# Extracted regions sometimes do not include a closing brace so we need to find the line that
-# has it in the rest of the function. Assumes that closing brace is located on its own line.
-def region_find_closing_brace():
-    global reginfo
-    numopeningbraces = 0
-    numclosingbraces = 0
-    for line in regloc.values():
-        numopeningbraces = numopeningbraces + line.count('{')
-        numclosingbraces = numclosingbraces + line.count('}')
-    # take the first line that has closing brace in it...
-    if numclosingbraces < numopeningbraces:
-        for i in range(reginfo.end + 1, funinfo.end): 
-            temp = funloc[i].lstrip(' \t')
-            temp = temp.rstrip(' \n')
-            # just an empty line
-            if len(temp) == 0:
-                continue
-            #found an empty line with brace, use this.
-            if temp == '}':
-                regloc[i] = funloc[i]
-                funloc[i] = None
-                reginfo.end = i;
-                break
-            #line filled with something, we should stop
-            if len(temp) != 0:
-                break
-
 #FIXME this will break quite a lot.
 def line_contains(line, string):
     idx = line.find(string) 
@@ -255,44 +327,27 @@ def line_contains(line, string):
         return (string, rhs) 
     return (None, None)
 
-
 #Boring parsing stuff
-def parse_llvm():
-    global reginfo 
-    global funinfo 
-    global special_exitlocs
-    global funrettype
-
-    func2 = Function2()
+# Read XML file.
+def parse_xml(fileinfo):
     tree = ET.parse(sys.argv[1]);
     for child in tree.getroot():
-        if (child.tag == 'region'):
-            reginfo = LocInfo.create(child)
-        if (child.tag == 'function'):
-            funinfo = LocInfo.create(child)
-        if (child.tag == 'variable'):
-            variable = Variable.create(child)
-            if (variable.isoutput):
-                func2.add_output(variable)
-            else:
-                func2.add_input(variable)
-        if (child.tag == 'regionexit'):
-            special_exitlocs.append(int(child.text))
-        if (child.tag == 'funcreturntype'):
-            funrettype = child.text
-    special_exitlocs = sorted(special_exitlocs)
-    return func2
+        if (child.tag == 'funcname'):   fileinfo.funname = child.text
+        if (child.tag == 'funcreturntype'): fileinfo.funrettype = child.text
+        if (child.tag == 'regionexit'): fileinfo.exitlocs.append(int(child.text))
+        if (child.tag == 'region'):     fileinfo.reginfo = LocInfo.create(child)
+        if (child.tag == 'function'):   fileinfo.funinfo = LocInfo.create(child)
+        if (child.tag == 'variable'):   fileinfo.vars.append(Variable.create(child))
 
-def parse_src():
+# Read original source file into two different dictionaries.
+def parse_src(fileinfo):
     f = open(sys.argv[2])
     line = f.readline()
     linenum = 1
     while line != '':
-        if linenum >= funinfo.start and linenum <= funinfo.end:
-            if linenum >= reginfo.start and linenum <= reginfo.end:
-                regloc[linenum] = line
-            else:
-                funloc[linenum] = line
+        if fileinfo.funinfo.between(linenum):
+            if fileinfo.reginfo.between(linenum): fileinfo.regloc[linenum] = line
+            else: fileinfo.funloc[linenum] = line
         line = f.readline()
         linenum = linenum + 1
     f.close()
@@ -301,11 +356,15 @@ def main():
     if len(sys.argv) != 3:
         sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
         sys.exit(1)
-    func2 = parse_llvm()
-    parse_src()
-    region_find_closing_brace()
-    extract2(func2)
+    fileinfo = FileInfo()
+    parse_xml(fileinfo)
+    parse_src(fileinfo)
 
+    fileinfo.try_separate_func_header()
+    fileinfo.region_find_closing_brace()
+    fileinfo.function_add_closing_brace()
+    fileinfo.extract()
+    #extract2(func2)
 
 if __name__ == '__main__':
     main()
