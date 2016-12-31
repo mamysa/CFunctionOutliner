@@ -62,8 +62,7 @@ namespace {
 		return stream.str();
 	}
 
-	template <typename T>
-	static std::string XMLElement(const char *key, T value, int numtabs) {
+	template<typename T> static std::string XMLElement(const char *key, T value, int numtabs) {
 		std::stringstream stream;
 		for (int i = 0; i < numtabs; i++) { stream << '\t'; }
 		stream << "<" << key << ">" << value << "</" << key << ">" << std::endl;
@@ -82,6 +81,16 @@ namespace {
 		if (it == SM.end()) { return false; }
 		const StringSet<>& funclist = it->getValue(); 
 		if (funclist.find(F->getName()) == funclist.end()) { return false; }
+
+		// extracting the function itself is a bit useless and causes problems for 
+		// code extractor... so we ignore it for now..
+#if 0
+		if (R->isTopLevelRegion()) { 
+			errs() << "Skipping top level region...\n";
+			return false; 
+		}
+#endif
+
 		return true;
 	}
 
@@ -107,54 +116,50 @@ namespace {
 	}
 
 
-
-	// line numbers provided by debug are not accurate enough and sometimes it misses the lines 
-	// that are inside the region. We pick the maximal linenumber of predecessor of entry basic block
-	// as region's starting linenum.
-	static AreaLoc getRegionLoc(const Region *R) {
+	// finds first / last line numbers of the basic block. 
+	static inline AreaLoc getBBLoc(const BasicBlock *BB) {
 		unsigned min = std::numeric_limits<unsigned>::max();
 		unsigned max = std::numeric_limits<unsigned>::min();
 
-		for (BasicBlock *BB: R->blocks()) 
-		for (Instruction& I: BB->getInstList()) {
+		for (const Instruction& I: BB->getInstList()) {
 			const DebugLoc& x = I.getDebugLoc(); 
 			if (x) {
 				min = std::min(min, x.getLine());
 				max = std::max(max, x.getLine());
 			}
 		}
-#if 0
-		// look at the predecessors of entry basic block and find the greatest line number there.
-		BasicBlock *first = R->getEntry();
-		unsigned localmax = std::numeric_limits<unsigned>::min();
-		for (auto it = pred_begin(first); it != pred_end(first); ++it) {
-			for (Instruction& I: (*it)->getInstList()) {
-				const DebugLoc& x = I.getDebugLoc(); 
-				if (x) { localmax = std::max(localmax, x.getLine()); }
-			}
-		}
 
-		// set new min only if localmax has been initialized.
-		if (localmax != std::numeric_limits<unsigned>::min()) { min = std::min(localmax, min); }
-#endif
-
-		return std::pair<unsigned,unsigned>(min, max);
+		return AreaLoc(min, max);
 	}
 
-	static AreaLoc getFunctionLoc(const Function *F) {
+	// finds first / last line numbers of the region. 
+	// inaccurate when region contains an entry basic block due to function
+	// arguments being pushed onto the stack.
+	static inline AreaLoc getRegionLoc(const Region *R) {
+		unsigned min = std::numeric_limits<unsigned>::max();
+		unsigned max = std::numeric_limits<unsigned>::min();
+
+		for (BasicBlock *BB: R->blocks()) {
+			AreaLoc a = getBBLoc(BB);
+			min = std::min(min, a.first);
+			max = std::max(max, a.second);
+		}
+
+		return AreaLoc(min, max); 
+	}
+
+	// finds first / last line numbers of the function. 
+	static inline AreaLoc getFunctionLoc(const Function *F) {
 		Metadata *M = F->getMetadata(0);
 		unsigned min = cast<DISubprogram>(M)->getLine(); 
 		unsigned max = std::numeric_limits<unsigned>::min();
 
-		for (auto blockIter = F->begin(); blockIter != F->end(); ++blockIter) 
-		for (auto instrIter = (*blockIter).begin(); instrIter != (*blockIter).end(); ++instrIter) {
-			const DebugLoc& x = instrIter->getDebugLoc();
-			if (x) { 
-				min = std::min(min, x.getLine());
-				max = std::max(max, x.getLine()); 
-			}
+		for (const BasicBlock& BB: F->getBasicBlockList()) {
+			AreaLoc a = getBBLoc(&BB);
+			min = std::min(min, a.first);
+			max = std::max(max, a.second);
 		}
-			
+
 		return AreaLoc(min, max); 
 	}
 
@@ -162,18 +167,40 @@ namespace {
 	// branching we have there. In case if those lines of code contain goto/return,
 	// we have to do some extra work...
 	static DenseSet<int> regionGetExitingLocs(Region *R) {
+
+
 		DenseSet<int> out;
-		for (BasicBlock *BB : R->blocks())
-		for (auto succIt = succ_begin(BB); succIt != succ_end(BB); ++succIt) {
-			if (!R->contains(*succIt)) {
-				// need to iterate over each instruction in each basic block 
-				// as terminator instruction does not always have debug metadata...
-				unsigned max = std::numeric_limits<unsigned>::min();
-				for (Instruction& I: BB->getInstList()) { 
-					const DebugLoc& x = I.getDebugLoc();
-					if (x) { max = std::max(max, x.getLine()); }
+		for (BasicBlock *BB : R->blocks()) {
+#if 0
+			// if we have return instruction inside the basic we have to find all the
+			// basic blocks that branch into this.
+			if (auto *ret = dyn_cast<ReturnInst>(BB->getTerminator())) {
+				for (auto predIt = pred_begin(BB); predIt != pred_end(BB); ++predIt) {
+					if (R->contains(*predIt)) {
+						unsigned max = std::numeric_limits<unsigned>::min();
+						for (Instruction& I: (*predIt)->getInstList()) { 
+							const DebugLoc& x = I.getDebugLoc();
+							if (x) { max = std::max(max, x.getLine()); }
+						}
+						out.insert(max);
+					}
 				}
-				out.insert(max);
+
+				return out;
+			}
+#endif
+
+			for (auto succIt = succ_begin(BB); succIt != succ_end(BB); ++succIt) {
+				if (!R->contains(*succIt)) {
+					// need to iterate over each instruction in each basic block 
+					// as terminator instruction does not always have debug metadata...
+					unsigned max = std::numeric_limits<unsigned>::min();
+					for (Instruction& I: BB->getInstList()) { 
+						const DebugLoc& x = I.getDebugLoc();
+						if (x) { max = std::max(max, x.getLine()); }
+					}
+					out.insert(max);
+				}
 			}
 		}
 
@@ -218,7 +245,7 @@ namespace {
 			std::pair<std::string, StringSet<>> kv(rhs, StringSet<>());
 			S.insert(kv);
 
-			StringSet<>& lst = S.find(rhs)->getValue();;
+			StringSet<>& lst = S.find(rhs)->getValue();
 			lst.insert(lhs);
 			errs() << rhs <<"\n";
 		}
@@ -241,11 +268,13 @@ namespace {
 		for (BasicBlock& BB: F->getBasicBlockList())
 		for (Instruction& I: BB.getInstList()) {
 			if (auto *alloca = dyn_cast<AllocaInst>(&I)) {
+				if (alloca->getNumUses() != 1) { continue; }
 				for (User *U: alloca->users()) {
 					if (auto *store = dyn_cast<StoreInst>(U)) {
 						Value *operand = store->getValueOperand();
-						if (isa<ConstantInt>(operand)) { out.insert(ValuePair(operand, alloca)); }
-						if (isa<ConstantFP>(operand))  { out.insert(ValuePair(operand, alloca)); }
+						ValuePair pair(operand, alloca);
+						if (isa<ConstantInt>(operand)) { out.insert(pair); }
+						if (isa<ConstantFP>(operand))  { out.insert(pair); }
 					}
 				}
 			}
@@ -330,8 +359,8 @@ namespace {
 						   const AreaLoc& funcloc, 
 						   const AreaLoc& regionloc,
 						   const DenseSet<ValuePair>& constants,
+						   DenseSet<Value *>& previous,
 						   DenseSet<Value *>& arglist) {
-		static DenseSet<Value *> previous;
 		DenseSet<Value *> sources = DFSInstruction(I);	
 		for (Value *V: sources) {
 			// we don't have to look at values we have seen before... 
@@ -371,8 +400,8 @@ namespace {
 						    const AreaLoc& funcloc, 
 						    const AreaLoc& regionloc,
 						    const DenseSet<ValuePair>& constants,
+						    DenseSet<Value *>& previous,
 						    DenseSet<Value *>& arglist) {
-		static DenseSet<Value *> previous;
 		DenseSet<Value *> sources = DFSInstruction(I);	
 		for (Value *V: sources) {
 			// we don't have to look at values we have seen before... 
@@ -670,9 +699,15 @@ namespace {
 				return false;
 			}
 
+			
 			if (!inRegionList(regionlist, F, R)) { return false; }
 
 			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
+			errs() << "Constants!\n";
+			for (auto constant: constants) {
+				 constant.first->dump();
+				 constant.second->dump();
+			}
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
@@ -688,18 +723,20 @@ namespace {
 			DenseSet<Value *> inputargs;
 			DenseSet<Value *> outputargs;
 
-			
+			DenseSet<Value *> inputprevious;
+			DenseSet<Value *> outputprevious;
+
 			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				findInputs(I, functionBounds, regionBounds, constants, inputargs); 
+				findInputs(I, functionBounds, regionBounds, constants, inputprevious, inputargs); 
 				//analyzeConstants(I, false, inputargs, regionBounds, constants);
 			}
 
 			for (auto blockit = successors.begin(); blockit != successors.end(); ++blockit) 
 			for (auto instrit = (*blockit)->begin(); instrit != (*blockit)->end(); ++instrit) {
 				Instruction *I = &*instrit;
-				findOutputs(I, functionBounds, regionBounds, constants, outputargs); 
+				findOutputs(I, functionBounds, regionBounds, constants, outputprevious, outputargs); 
 				//analyzeConstants(I, true, outputargs, regionBounds, constants);
 			}
 
@@ -709,7 +746,6 @@ namespace {
 			outfile << XMLOpeningTag("extractinfo", 0);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
-			errs() << OutDirectory << "\n";
 
 			// dump variable info...
 			for (Value *V : inputargs)  { writeVariableInfo(V, false, outfile); }
