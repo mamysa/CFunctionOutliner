@@ -184,10 +184,10 @@ class Function:
         self.outputs = []
         self.special_out = [] # for return / gotos within region. (see below)
 
-        self.funname    = funname ## name of the extracted function
-        self.funrettype = funrettype ## return type of the original function
-        self.retvalname = '%s_retval' ## name of the structure returned from the function
-        self.retvaltype = 'struct %s_struct' ## type name of the structure returned from extracted function
+        self.funname    = funname     # name of the extracted function
+        self.funrettype = funrettype  # return type of the original function
+        self.retvalname = '%s_retval' # name of the structure returned from the extracted function 
+        self.retvaltype = 'struct %s_struct' # type name of the structure returned from extracted function
 
         # if extracted function contains return / goto statements, we need to also return same values
         # from caller function. The idea is to use (flag, value) pairs. After extracted function returns, 
@@ -245,13 +245,14 @@ class Function:
         else: rett = self.retvaltype % (self.funname)
         return ('%s %s(%s) {\n') % (rett, self.funname, args)
 
-    ## returns correct function call string
+    # returns correct function call string
+    # if the region is toplevel, we do not need to return a structure from the extracted function, 
+    # and just returning same type as original function would be sufficient.
     def get_fn_call(self, toplevel):
         args = ''
         for var in self.inputs: args = args + var.name + ', '
         args = args.rstrip(', ') 
 
-        ## return funcionname() would suffice for toplevel regions
         if toplevel:
             if self.funrettype == 'void':
                 return ('\t%s(%s);\n') % (self.funname, args)
@@ -261,11 +262,9 @@ class Function:
         return ('%s %s = %s(%s);\n') % (rett, retn, self.funname, args)
 
 
-    # have to also return input arguments. Passing inputs by pointer doesn't work in certain 
-    # cases (like struct initializers) and results in UB.
+    # Defines a structure that is returned from extracted function.
+    # If region is toplevel, we do not need such structure - return value directly.
     def declare_return_type(self, toplevel):
-        # if we are toplevel region, we do not need to restore locals when we exit, 
-        # return functionname would suffice
         if toplevel: return ''
 
         args = '' 
@@ -279,8 +278,9 @@ class Function:
         type = self.retvaltype % (self.funname)
         return '%s {\n%s};\n\n' % (type, args)
 
-    # defines return value in the beginning of the extracted function and sets 
+    # Defines return value in the beginning of the extracted function and sets 
     # special return flags to 0 if those exist
+    # If region is toplevel, we do not need this.
     def define_return_value(self, toplevel):
         if toplevel: return ''
 
@@ -293,9 +293,9 @@ class Function:
         return out + '\n'
 
 
-    # when function is about to return, we need to store all the return values into 
-    # the structure and return said structure
-    # stores only inputs / outputs, special exits are handled separately
+    # Stores all local variable in return structure before exiting extracted function.
+    # Regions with return statements are handled somewhere else...
+    # If region is toplevel, we do not need this!
     def store_retvals_and_return(self, toplevel):
         if toplevel: return ''
 
@@ -305,8 +305,9 @@ class Function:
         for var in self.outputs: args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
         return '%sreturn %s;\n' % (args, rett)
 
-    # restores variables in the callee. If variable is in output variable list, we also need to
-    # define its time
+    # Restores local variables in the caller from the structure returned by
+    # extracted function, definining it if necessary. 
+    # If region is toplevel, we do not do this!
     def restore_retvals(self, toplevel):
         if toplevel: return ''
 
@@ -370,7 +371,6 @@ def main():
     fileinfo.region_find_closing_brace()
     fileinfo.function_add_closing_brace()
     fileinfo.extract()
-    #extract2(func2)
 
 if __name__ == '__main__':
     main()
