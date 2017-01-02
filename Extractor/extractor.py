@@ -2,6 +2,7 @@ import sys
 import re
 import xml.etree.cElementTree as ET
 
+# Class containing lines of code that we will be operating on, as well as all data output by llvm.
 class FileInfo:
     def __init__(self):
         self.funinfo = None  ## starting ending linenumbers of a function
@@ -12,6 +13,7 @@ class FileInfo:
         self.vars = []       ## variable list
         self.funrettype = "" ## return type of the function
         self.funname = ""    ## name of the extracted function
+        self.toplevel = False ## is the region a function already?
 
     # in case if region starts with the same line as the function we are extracting from, 
     # it means that function header is also a part of a region and has to be separated from 
@@ -19,9 +21,10 @@ class FileInfo:
     # This is done by grabbing everything up to and including the first opening brace and updating
     # region bounds accordingly.
     def try_separate_func_header(self):
-        # nothing to do here bailing
-        if self.reginfo.start != self.funinfo.start: return
+        if self.reginfo == self.funinfo:
+            self.toplevel = True
 
+        if self.reginfo.start != self.funinfo.start: return
         for i in range(self.reginfo.start, self.reginfo.end + 1):
             n = self.regloc[i].count('{')
             if n != 0: 
@@ -78,6 +81,9 @@ class FileInfo:
             self.funloc[self.funinfo.end] = '}\n'
 
     def extract(self):
+        toplevel = self.funinfo == self.reginfo
+        print(toplevel)
+
         function = Function(self.funname, self.funrettype)
         for var in self.vars:
             function.add_variable(var)
@@ -85,23 +91,21 @@ class FileInfo:
         for loc in sorted(self.exitlocs):
             function.check_exit_loc(self.regloc, loc)
 
-        sys.stdout.write(function.declare_return_type())
-        sys.stdout.write(function.get_fn_definition())
-        sys.stdout.write(function.define_return_value())
+        sys.stdout.write(function.declare_return_type(self.toplevel))
+        sys.stdout.write(function.get_fn_definition(self.toplevel))
+        sys.stdout.write(function.define_return_value(self.toplevel))
         for num in sorted(self.regloc.keys()):
             sys.stdout.write(self.regloc[num])
         if len(function.special_out) == 0:
-            sys.stdout.write(function.store_retvals_and_return())
+            sys.stdout.write(function.store_retvals_and_return(self.toplevel))
         sys.stdout.write('}\n\n')
 
         for i in range(self.funinfo.start, self.reginfo.start):
             sys.stdout.write(self.funloc[i])
-        sys.stdout.write(function.get_fn_call())  
-        sys.stdout.write(function.restore_retvals()) ## if function is not void, restore all variables
+        sys.stdout.write(function.get_fn_call(self.toplevel))  
+        sys.stdout.write(function.restore_retvals(self.toplevel)) ## if function is not void, restore all variables
         for i in range(self.reginfo.end + 1, self.funinfo.end + 1):
             sys.stdout.write(self.funloc[i])
-
-
 
 
 class LocInfo:
@@ -135,6 +139,8 @@ class Variable:
         self.type = type
         self.isfunptr = False
         self.isoutput = False
+        self.isstatic = False
+        self.isconstq = False
 
     def __repr__(self):
         return '<Variable name:%s type:%s isoutput:%s>' % (self.name, self.type, self.isoutput)
@@ -150,16 +156,18 @@ class Variable:
         type = xml.find('type')
         isoutput = xml.find('isoutput')
         isfunptr = xml.find('isfunptr')
+        isstatic = xml.find('isstatic')
+        isconstq = xml.find('isconstq')
         
         #name, ptrl and type are required
         if name == None or type == None:
             raise Exception('Missing variable info');
         
         variable = Variable(name.text, type.text)
-        if isoutput != None:
-            variable.isoutput = bool(isoutput.text)
-        if isfunptr != None:
-            variable.isfunptr = bool(isfunptr.text)
+        if isoutput != None: variable.isoutput = bool(isoutput.text)
+        if isfunptr != None: variable.isfunptr = bool(isfunptr.text)
+        if isstatic != None: variable.isstatic = bool(isstatic.text)
+        if isconstq != None: variable.isstatic = bool(isconstq.text)
         return variable
 
 # if condition class for possible return / goto statements inside the region that we have to check 
@@ -187,10 +195,10 @@ class Function:
         self.exitflagname  = '%s_flag_loc%s' 
         self.exitvaluename = '%s_value_loc%s'
 
-    ## TODO check for const qualified variables. 
+    ## add variable to either input / output list.
     def add_variable(self, var):
-        if not var.isoutput: self.inputs.append(var)
         if var.isoutput: self.outputs.append(var)
+        else: self.inputs.append(var)
 
     # replace return / goto statement in the region with setting flag to 1 and setting value to whatever
     # comes on the rhs of the return statement.
@@ -226,27 +234,40 @@ class Function:
             v1 = '%s.%s = %s;\n' % (rett, flg.name , '1')
             regloc[loc] = '%s%s' % (v1, self.store_retvals_and_return())    
 
-
     ## returns function definition.
-    def get_fn_definition(self):
+    def get_fn_definition(self, toplevel):
         args = '' 
         for var in self.inputs: args = args + var.as_argument() + ', '
         args = args.rstrip(', ') 
-        rett = self.retvaltype % (self.funname)
+
+        rett = ''
+        if toplevel: rett = self.funrettype
+        else: rett = self.retvaltype % (self.funname)
         return ('%s %s(%s) {\n') % (rett, self.funname, args)
 
     ## returns correct function call string
-    def get_fn_call(self):
+    def get_fn_call(self, toplevel):
         args = ''
         for var in self.inputs: args = args + var.name + ', '
         args = args.rstrip(', ') 
+
+        ## return funcionname() would suffice for toplevel regions
+        if toplevel:
+            if self.funrettype == 'void':
+                return ('\t%s(%s);\n') % (self.funname, args)
+            return ('\treturn %s(%s);\n') % (self.funname, args)
         retn = self.retvalname % (self.funname)
         rett = self.retvaltype % (self.funname)
         return ('%s %s = %s(%s);\n') % (rett, retn, self.funname, args)
 
+
     # have to also return input arguments. Passing inputs by pointer doesn't work in certain 
     # cases (like struct initializers) and results in UB.
-    def declare_return_type(self):
+    def declare_return_type(self, toplevel):
+        # if we are toplevel region, we do not need to restore locals when we exit, 
+        # return functionname would suffice
+        if toplevel: return ''
+
         args = '' 
         for var in self.inputs:  args = args + '\t' + var.as_argument() + ';\n' 
         for var in self.outputs: args = args + '\t' + var.as_argument() + ';\n' 
@@ -260,7 +281,9 @@ class Function:
 
     # defines return value in the beginning of the extracted function and sets 
     # special return flags to 0 if those exist
-    def define_return_value(self):
+    def define_return_value(self, toplevel):
+        if toplevel: return ''
+
         name = self.retvalname % (self.funname)
         type = self.retvaltype % (self.funname)
         out  = '\t%s %s;\n' % (type, name)
@@ -273,7 +296,9 @@ class Function:
     # when function is about to return, we need to store all the return values into 
     # the structure and return said structure
     # stores only inputs / outputs, special exits are handled separately
-    def store_retvals_and_return(self):
+    def store_retvals_and_return(self, toplevel):
+        if toplevel: return ''
+
         args = ''
         rett = self.retvalname % (self.funname)
         for var in self.inputs:  args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
@@ -282,7 +307,9 @@ class Function:
 
     # restores variables in the callee. If variable is in output variable list, we also need to
     # define its time
-    def restore_retvals(self):
+    def restore_retvals(self, toplevel):
+        if toplevel: return ''
+
         args = ''
         rett = self.retvalname % (self.funname)
         for var in self.inputs:  args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
@@ -297,27 +324,6 @@ class Function:
         return args + out;
 
         
-def extract2(function):
-    for loc in special_exitlocs:
-        function.check_exit_loc(loc)
-
-    sys.stdout.write(function.declare_return_type())
-    sys.stdout.write(function.get_fn_definition())
-    sys.stdout.write(function.define_return_value())
-    for num in sorted(regloc.keys()):
-        sys.stdout.write(regloc[num])
-    if len(function.special_out) == 0:
-        sys.stdout.write(function.store_retvals_and_return())
-    sys.stdout.write('}\n\n')
-
-    for i in range(funinfo.start, reginfo.start):
-        sys.stdout.write(funloc[i])
-    sys.stdout.write(function.get_fn_call())  
-    sys.stdout.write(function.restore_retvals()) ## if function is not void, restore all variables
-    for i in range(reginfo.end + 1, funinfo.end + 1):
-        sys.stdout.write(funloc[i])
-
-
 #FIXME this will break quite a lot.
 def line_contains(line, string):
     idx = line.find(string) 
