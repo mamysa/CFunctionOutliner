@@ -5,15 +5,15 @@ import xml.etree.cElementTree as ET
 # Class containing lines of code that we will be operating on, as well as all data output by llvm.
 class FileInfo:
     def __init__(self):
-        self.funinfo = None  ## starting ending linenumbers of a function
-        self.reginfo = None  ## starting ending linenumbers of a regioon
+        self.funinfo = None   # starting ending linenumbers of a function
+        self.reginfo = None   # starting ending linenumbers of a regioon
         self.funloc = {} 
-        self.regloc = {}     ## actual lines for both region and a function
-        self.exitlocs = []   ## line numbers corresponding to exiting edges of the region.
-        self.vars = []       ## variable list
-        self.funrettype = "" ## return type of the function
-        self.funname = ""    ## name of the extracted function
-        self.toplevel = False ## is the region a function already?
+        self.regloc = {}      # actual lines for both region and a function
+        self.exitlocs = []    # line numbers corresponding to exiting edges of the region.
+        self.vars = []        # variable list
+        self.funrettype = ""  # return type of the function
+        self.funname = ""     # name of the extracted function
+        self.toplevel = False # is the region a function already?
 
     # in case if region starts with the same line as the function we are extracting from, 
     # it means that function header is also a part of a region and has to be separated from 
@@ -21,9 +21,6 @@ class FileInfo:
     # This is done by grabbing everything up to and including the first opening brace and updating
     # region bounds accordingly.
     def try_separate_func_header(self):
-        if self.reginfo == self.funinfo:
-            self.toplevel = True
-
         if self.reginfo.start != self.funinfo.start: return
         for i in range(self.reginfo.start, self.reginfo.end + 1):
             n = self.regloc[i].count('{')
@@ -51,22 +48,32 @@ class FileInfo:
             numopeningbraces = numopeningbraces + line.count('{')
             numclosingbraces = numclosingbraces + line.count('}')
         # take the first line that has closing brace in it...
-        if numclosingbraces < numopeningbraces:
-            for i in range(self.reginfo.end + 1, self.funinfo.end): 
+        print (numclosingbraces, numopeningbraces)
+        while numclosingbraces < numopeningbraces:
+            print (numclosingbraces, numopeningbraces)
+            for i in range(self.reginfo.end + 1, self.funinfo.end + 1): 
                 temp = self.funloc[i].lstrip(' \t')
                 temp = temp.rstrip(' \n')
-                # just an empty line
-                if len(temp) == 0:
-                    continue
+                if len(temp) == 0: continue # empty line, skip
+                
                 #found an empty line with brace, use this.
                 if temp == '}':
                     self.regloc[i] = self.funloc[i]
                     del self.funloc[i] 
-                    self.reginfo.end = i;
+                    self.reginfo.end = i
+                    numclosingbraces = numclosingbraces + 1
                     break
-                #line filled with something, we should stop
-                if len(temp) != 0:
-                    break
+
+                # doing something else here than crashing causes assertion in line_contains to fail.
+                # FIXME low priority. In cases I have tested the program with this condition doesn't even
+                # happen. 
+                if len(temp) != 0: 
+                    assert(False) # we have gone too far into the rest of the function. This should't happen
+
+        # save brace numbers for function header insertion!
+        self.reginfo.closingbracenum = numclosingbraces
+        self.reginfo.openingbracenum = numopeningbraces 
+
 
     def function_add_closing_brace(self):
         numopeningbraces = 0
@@ -81,9 +88,6 @@ class FileInfo:
             self.funloc[self.funinfo.end] = '}\n'
 
     def extract(self):
-        toplevel = self.funinfo == self.reginfo
-        print(toplevel)
-
         function = Function(self.funname, self.funrettype)
         for var in self.vars:
             function.add_variable(var)
@@ -98,7 +102,13 @@ class FileInfo:
             sys.stdout.write(self.regloc[num])
         if len(function.special_out) == 0:
             sys.stdout.write(function.store_retvals_and_return(self.toplevel))
-        sys.stdout.write('}\n\n')
+        
+        # after inserting function header number of braces will be unbalanced, insert closing 
+        # brace if necessary.
+        if self.reginfo.closingbracenum == self.reginfo.openingbracenum: 
+            sys.stdout.write('}\n\n')  
+        else: 
+            sys.stdout.write('\n\n')  
 
         for i in range(self.funinfo.start, self.reginfo.start):
             sys.stdout.write(self.funloc[i])
@@ -112,6 +122,8 @@ class LocInfo:
     def __init__(self, start, end):
         self.start = start
         self.end = end
+        self.closingbracenum = 0
+        self.openingbracenum = 0
 
     def between(self, num):
         return num >= self.start and num <= self.end
@@ -167,7 +179,7 @@ class Variable:
         if isoutput != None: variable.isoutput = bool(isoutput.text)
         if isfunptr != None: variable.isfunptr = bool(isfunptr.text)
         if isstatic != None: variable.isstatic = bool(isstatic.text)
-        if isconstq != None: variable.isstatic = bool(isconstq.text)
+        if isconstq != None: variable.isconstq = bool(isconstq.text)
         return variable
 
 # if condition class for possible return / goto statements inside the region that we have to check 
@@ -208,17 +220,22 @@ class Function:
         temp = temp.lstrip('\t ')
         temp = temp.rstrip('\n; ')
 
+        
         retstmt = line_contains(temp, 'return')
         if retstmt != (None, None):
-            flg = Variable(self.exitflagname  % (self.funcname, loc), 'char')
-            val = Variable(self.exitvaluename % (self.funcname, loc), funrettype)
+            flg = Variable(self.exitflagname  % (self.funname, loc), 'char')
+            val = None 
+            if (retstmt[1] != None): 
+                val = Variable(self.exitvaluename % (self.funname, loc), self.funrettype)
             self.special_out.append(IfCondition(flg, val, 'return')) # need this fn_restore_variables procedure
             
             # store these variables in the struct and replace current line with it
             # we do not have to restore all the variables if we are returning.
-            rett = self.retvalname % (self.funcname)
+            rett = self.retvalname % (self.funname)
             v1 = '%s.%s = %s;\n' % (rett, flg.name , '1')
-            v2 = '%s.%s = %s;\n' % (rett, val.name , retstmt[1]) # store retstmt.rhs
+            v2 = ''
+            if (retstmt[1] != None): 
+                v2 = '%s.%s = %s;\n' % (rett, val.name , retstmt[1]) # store retstmt.rhs
             regloc[loc] = '%s%sreturn %s;\n' % (v1, v2, rett)    # should also return 
             return
 
@@ -273,7 +290,8 @@ class Function:
 
         for cond in self.special_out:
             args = args + '\t' + cond.cond.as_argument() + ';\n'
-            if (cond.stmt == 'return'): args = args + '\t' + cond.var.as_argument() + ';\n'
+            if (cond.stmt == 'return' and cond.var != None): 
+                args = args + '\t' + cond.var.as_argument() + ';\n'
 
         type = self.retvaltype % (self.funname)
         return '%s {\n%s};\n\n' % (type, args)
@@ -317,22 +335,51 @@ class Function:
         for var in self.outputs: args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
 
         # generate if statements if applicable
+        # for return statements, we can also have return statement without any return values, we have 
+        # to treat that case differently below!
         out = ''
         for cond in self.special_out:
-            var = cond.var.name
-            if cond.stmt == 'return': var = '%s.%s' % (rett, cond.var.name)
+            if cond.stmt == 'return' and cond.var == None: var = ''
+            if cond.stmt == 'return' and cond.var != None: var = '%s.%s' % (rett, cond.var.name)
             out = out + 'if (%s.%s) { %s %s; }\n' % (rett, cond.cond.name, cond.stmt, var)
         return args + out;
 
         
-#FIXME this will break quite a lot.
+# returns the string if it exists in the string. Also returns everything on the right-hand side of such 
+# string. Useful for goto/return statements. Performs certain assertion checks to ensure the code extracted
+# is formatted appropriately. See above for formatting details.
 def line_contains(line, string):
     idx = line.find(string) 
     if idx != -1:
-        ## TODO extract things on the LHS too as we might have multiple statements on the same line...
-        rhs = line[(idx+len(string)):]
+        if (len(string) == len(line)): return (string, None) # just have return statement, nothing on rhs.
+        lhs = line[:(idx+len(string))].strip(' \n')
+        rhs = line[(idx+len(string)):].strip(' \n;')
+        lhstemp = strip_char_string_literals(lhs)
+        rhstemp = strip_char_string_literals(rhs)
+        assert(rhstemp.find('}') == -1 and lhstemp.find('{') == -1) ## TODO it also matches literal braces...
+        assert(not line[idx + len(string)].isalnum())
+        assert(idx == 0 or not line[idx-1].isalnum())
+        assert(rhstemp.find(';') == -1) # must not have anything after return statement
+        assert(lhstemp == string) # must have some statement on the same line before the keyword. bail.
         return (string, rhs) 
     return (None, None)
+
+# counts number of opening / closing braces. Expects loc to be a dictionary of strings.
+def brace_count(loc):
+    numopeningbraces = 0
+    numclosingbraces = 0
+    for line in loc.values():
+        line = strip_char_string_literals(line); 
+        numopeningbraces = numopeningbraces + line.count('{')
+        numclosingbraces = numclosingbraces + line.count('}')
+    return (numopeningbraces, numclosingbraces)
+
+
+# remove all literal chars / literal strings from the line.
+def strip_char_string_literals(line):
+    ret = re.sub(r'\'(.)*\'', '', line, re.M | re.I)
+    ret = re.sub(r'\"(\\.|[^"])*\"', '', ret, re.M | re.I) 
+    return ret
 
 #Boring parsing stuff
 # Read XML file.
@@ -345,6 +392,7 @@ def parse_xml(fileinfo):
         if (child.tag == 'region'):     fileinfo.reginfo = LocInfo.create(child)
         if (child.tag == 'function'):   fileinfo.funinfo = LocInfo.create(child)
         if (child.tag == 'variable'):   fileinfo.vars.append(Variable.create(child))
+        if (child.tag == 'toplevel'):   fileinfo.toplevel = bool(int(child.text))
 
 # Read original source file into two different dictionaries.
 def parse_src(fileinfo):
