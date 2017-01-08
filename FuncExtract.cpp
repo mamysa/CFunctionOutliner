@@ -540,10 +540,12 @@ namespace {
 		return (DLV->getArg() != 0);
 	}
 
+	struct VariableInfo { std::string name; std::string type; bool isfunptr; bool isconstq; bool isstatic; };
+
 	// extracts the type of the provided debuginfo type as a string. Follows the pointers 
 	// as necessary. std::pair is returned because function pointers have to be treated 
 	// slightly differently and in that case we do not have to append variable name.
-	static std::pair<std::string, bool> getTypeString(DIType *T, StringRef variablename) {
+	static VariableInfo getTypeString(DIType *T, StringRef variablename) {
 		std::vector<unsigned> tags;
 
 		Metadata *md = cast<Metadata>(T);
@@ -554,10 +556,11 @@ namespace {
 
 			// we are interested in array type. 
 			if (auto a = dyn_cast<DICompositeType>(md)) {
-				if (a->getTag() == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
-				if (a->getTag() == dwarf::DW_TAG_structure_type)   { tags.push_back(a->getTag()); break; }
-				if (a->getTag() == dwarf::DW_TAG_union_type)       { tags.push_back(a->getTag()); break; }
-				if (a->getTag() == dwarf::DW_TAG_enumeration_type) { tags.push_back(a->getTag()); break; }
+				auto t = a->getTag();
+				if (t == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
+				if (t == dwarf::DW_TAG_structure_type)   { tags.push_back(t); break; }
+				if (t == dwarf::DW_TAG_union_type)       { tags.push_back(t); break; }
+				if (t == dwarf::DW_TAG_enumeration_type) { tags.push_back(t); break; }
 				Metadata *next = a->getBaseType();
 				if (next == nullptr)  { break; } // no basetype property here, bailing
 				md = next; 
@@ -565,9 +568,10 @@ namespace {
 			}
  
 			if (auto a = dyn_cast<DIDerivedType>(md)) {
-				if (a->getTag() == dwarf::DW_TAG_pointer_type) { tags.push_back(a->getTag()); }
-				if (a->getTag() == dwarf::DW_TAG_const_type  ) { tags.push_back(a->getTag()); }
-				if (a->getTag() == dwarf::DW_TAG_typedef     ) { tags.push_back(a->getTag()); break; }
+				auto t = a->getTag();
+				if (t == dwarf::DW_TAG_pointer_type) { tags.push_back(t); }
+				if (t == dwarf::DW_TAG_const_type  ) { tags.push_back(t); }
+				if (t == dwarf::DW_TAG_typedef     ) { tags.push_back(t); break; }
 				Metadata *next = a->getBaseType();
 				if (next == nullptr)  { break; } // no basetype property here, bailing
 				md = next;
@@ -578,7 +582,9 @@ namespace {
 		DIType *type = cast<DIType>(md);
 		std::reverse(tags.begin(), tags.end());  
 
+		VariableInfo ret = {"", "", false, false, false};
 		std::string typestr;
+
 		// function pointers have to be handled a tad differently.
 		// First argument in DISubroutineArray is return type;
 		// The rest are arguments' types. We also need a name of the value for this one - 
@@ -590,13 +596,13 @@ namespace {
 			// get function's return type
 			Metadata *rettypeinfo = types[0];
 			if (rettypeinfo == nullptr) { lhs += "void "; }  // void function
-			else { lhs += getTypeString(cast<DIType>(rettypeinfo), variablename).first; }
+			else { lhs += getTypeString(cast<DIType>(rettypeinfo), variablename).type; }
 
 			// get function's arguments' types
 			rhs += '(';
 			if (types.size() == 1) { rhs += "void)"; } // we have 0 input arguments...
 			for (unsigned i = 1; i < types.size(); i++) {
-				rhs += getTypeString(cast<DIType>(types[i]), variablename).first;	
+				rhs += getTypeString(cast<DIType>(types[i]), variablename).type;	
 				if (i <  types.size() - 1) { rhs += ", ";}
 				if (i == types.size() - 1) { rhs += ")"; }
 			}
@@ -610,14 +616,17 @@ namespace {
 			}
 
 			typestr = lhs + '(' + typestr + variablename.str() + ')' + rhs;
-			return std::pair<std::string, bool>(typestr, true);
+			ret.type =  typestr;
+			ret.isfunptr = true;
+
+			return ret; 
 		}
 
 		// everything else is done below
 		// do not insert space when we are not adding anything else...
 		// also, we are not expecting values to be of type void, so type->getName should not be empty.
 		// TODO we might not need the following condition 
-		if (tags.size() == 0) { return std::pair<std::string, bool>(type->getName().str(), false);  }
+		//if (tags.size() == 0) { return std::pair<std::string, bool>(type->getName().str(), false);  }
 
 		// void things are just empty, gotta fix that.
 		// also, anonymous structs are also going to show up as 'struct void'. Passing anonymous
@@ -628,15 +637,17 @@ namespace {
 
 		for (unsigned& t: tags) {
 			switch (t) {
-				case dwarf::DW_TAG_pointer_type:     { typestr += "*"; 			      break; }
-				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
-				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr; break; }
-				case dwarf::DW_TAG_enumeration_type: { typestr = "enum " + typestr;   break; }
-				case dwarf::DW_TAG_typedef:          { 							    ; break; }
-				case dwarf::DW_TAG_const_type:       { typestr += "const ";           break; }
+				case dwarf::DW_TAG_pointer_type:     { typestr += "*"                          ; break; }
+				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr           ; break; }
+				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr           ; break; }
+				case dwarf::DW_TAG_enumeration_type: { typestr = "enum " + typestr             ; break; }
+				case dwarf::DW_TAG_typedef:          { 							               ; break; }
+				case dwarf::DW_TAG_const_type:       { typestr += "const "; ret.isconstq = true; break; }
 			}
 		}
-		return std::pair<std::string, bool>(typestr, false);
+
+		ret.type = typestr;
+		return ret; 
 	}
 
 	// gets function's return type
@@ -645,34 +656,37 @@ namespace {
 		if (auto *ST = dyn_cast<DISubroutineType>(SP->getRawType())) {
 			Metadata *M = ST->getTypeArray()[0];
 			if (!M) { return std::string("void"); }
-			return getTypeString(cast<DIType>(M), "").first;
+			return getTypeString(cast<DIType>(M), "").type;
 		}
 
 		return std::string("unknown");
 	}
 
-	
-	static void writeVariableInfo(Value *V, bool isOutputVar, std::ofstream& out) {
+	static VariableInfo getVariableInfo(Value *V) {
 		Metadata *M = getMetadata(V);
-		if (!M) { return; }
+		if (!M) { return {"", "", false, false, false}; }
 		DIVariable *DI = cast<DIVariable>(M);
-		auto kv = getTypeString(cast<DIType>(DI->getRawType()), DI->getName());
-
-		out << XMLOpeningTag("variable", 1);
-		out << XMLElement("name", DI->getName().str(), 2);
-		out << XMLElement("type", kv.first , 2);
-		if (isOutputVar) { out << XMLElement("isoutput", true, 2); }
-		if   (kv.second) { out << XMLElement("isfunptr", true, 2); }
+		auto varinfo = getTypeString(cast<DIType>(DI->getRawType()), DI->getName());
+		varinfo.name = DI->getName().str();
 
 		// variable is static. 
 		if (auto *a = dyn_cast<GlobalVariable>(V)) {
-			if (!a->isConstant() && a->hasInternalLinkage()) {
-				out << XMLElement("isstatic", true, 2);	
-			}
+			if (!a->isConstant() && a->hasInternalLinkage()) { varinfo.isstatic = true; }
 		}
 
+		return varinfo;
+	}
+	
+	static void writeVariableInfo(VariableInfo& info, bool isOutputVar, std::ofstream& out) {
+		if (info.name.length() == 0) { return; }
+		out << XMLOpeningTag("variable", 1);
+		out << XMLElement("name", info.name, 2);
+		out << XMLElement("type", info.type, 2);
+		if (isOutputVar)   { out << XMLElement("isoutput", true, 2); }
+		if (info.isfunptr) { out << XMLElement("isfunptr", true, 2); }
+		if (info.isconstq) { out << XMLElement("isconstq", true, 2); }
+		if (info.isstatic) { out << XMLElement("isstatic", true, 2); }
 		out << XMLClosingTag("variable", 1);
-		errs() << kv.first << "\n";
 	}
 
 	static void writeLocInfo(AreaLoc& loc, const char *tag, std::ofstream& out) {
@@ -748,14 +762,21 @@ namespace {
 			writeLocInfo(functionBounds, "function", outfile);
 
 			// dump variable info...
-			for (Value *V : inputargs)  { writeVariableInfo(V, false, outfile); }
-			for (Value *V : outputargs) { writeVariableInfo(V, true,  outfile); }
+			for (Value *V : inputargs)  { 
+				VariableInfo info = getVariableInfo(V);
+				writeVariableInfo(info , false, outfile); 
+			}
 
+			for (Value *V : outputargs) { 
+				VariableInfo info = getVariableInfo(V);
+				writeVariableInfo(info, true,  outfile); 
+			}
 
 			// dump region exit locs
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
 			outfile << XMLElement("funcreturntype", getFunctionReturnType(F), 1);
 			outfile << XMLElement("funcname", outfilename, 1);
+			outfile << XMLElement("toplevel", R->isTopLevelRegion(), 1);
 			errs() << "fnreturntype: " << getFunctionReturnType(F) << "\n";
 
 
