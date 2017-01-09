@@ -37,6 +37,7 @@ namespace {
 
 	typedef std::pair<unsigned,unsigned> AreaLoc;
 	typedef std::pair<Value *, Value *>  ValuePair;
+	struct VariableInfo { std::string name; std::string type; bool isfunptr; bool isconstq; bool isstatic; };
 
 	static AreaLoc getRegionLoc(const Region *);
 	static AreaLoc getFunctionLoc(const Function *);
@@ -167,40 +168,18 @@ namespace {
 	// branching we have there. In case if those lines of code contain goto/return,
 	// we have to do some extra work...
 	static DenseSet<int> regionGetExitingLocs(Region *R) {
-
-
 		DenseSet<int> out;
-		for (BasicBlock *BB : R->blocks()) {
-#if 0
-			// if we have return instruction inside the basic we have to find all the
-			// basic blocks that branch into this.
-			if (auto *ret = dyn_cast<ReturnInst>(BB->getTerminator())) {
-				for (auto predIt = pred_begin(BB); predIt != pred_end(BB); ++predIt) {
-					if (R->contains(*predIt)) {
-						unsigned max = std::numeric_limits<unsigned>::min();
-						for (Instruction& I: (*predIt)->getInstList()) { 
-							const DebugLoc& x = I.getDebugLoc();
-							if (x) { max = std::max(max, x.getLine()); }
-						}
-						out.insert(max);
-					}
+		for (BasicBlock *BB : R->blocks())
+		for (auto succIt = succ_begin(BB); succIt != succ_end(BB); ++succIt) {
+			if (!R->contains(*succIt)) {
+				// need to iterate over each instruction in each basic block 
+				// as terminator instruction does not always have debug metadata...
+				unsigned max = std::numeric_limits<unsigned>::min();
+				for (Instruction& I: BB->getInstList()) { 
+					const DebugLoc& x = I.getDebugLoc();
+					if (x) { max = std::max(max, x.getLine()); }
 				}
-
-				return out;
-			}
-#endif
-
-			for (auto succIt = succ_begin(BB); succIt != succ_end(BB); ++succIt) {
-				if (!R->contains(*succIt)) {
-					// need to iterate over each instruction in each basic block 
-					// as terminator instruction does not always have debug metadata...
-					unsigned max = std::numeric_limits<unsigned>::min();
-					for (Instruction& I: BB->getInstList()) { 
-						const DebugLoc& x = I.getDebugLoc();
-						if (x) { max = std::max(max, x.getLine()); }
-					}
-					out.insert(max);
-				}
+				out.insert(max);
 			}
 		}
 
@@ -436,92 +415,6 @@ namespace {
 		}
 	}
 
-
-#if 0
-	static void analyzeOperands(Instruction *I, 
-								const DenseSet<BasicBlock *>& successors,
-								DenseSet<Value *>& inputargs, 
-								DenseSet<Value *>& outputargs,
-								const AreaLoc& regionBounds,
-								const AreaLoc& functionBounds) {
-		static DenseSet<Value *> analyzed; 
-		DenseSet<Value *> sources = DFSInstruction(I);	
-		for (auto it = sources.begin(); it != sources.end(); ++it) {
-			// we don't have to look at values we have seen before... 
-			if (analyzed.find(*it) != analyzed.end()) { continue; }
-			analyzed.insert(*it);
-			
-			Metadata *M = getMetadata(*it);
-			if (!M) { continue; }
-
-			if (auto instr = dyn_cast<AllocaInst>(*it)) {
-				// when compiled with -O0 flag, all function arguments are copied onto the stack
-				// and debug info of corresponding alloca instructions tells us whether or not 
-				// it is used to store function arguments.
-				// I.E. avoid using -mem2reg opt pass
-				if (isArgument(instr)) {
-					inputargs.insert(instr);
-				}
-				// is source instruction is allocated and declared outside the region? 
-				if (!declaredInArea(M, regionBounds)) {
-					inputargs.insert(instr);
-				}
-				// if source instruction is used by some instruction is some successor basic block, 
-				// and it is defined inside the region, add it to output list.
-				for (auto userit = instr->user_begin(); userit != instr->user_end(); ++userit) {
-					Instruction *userinstr = cast<Instruction>(*userit);	
-					BasicBlock *parentBB = userinstr->getParent(); 
-					if (successors.find(parentBB) != successors.end()) {
-						if (declaredInArea(M, regionBounds) && !isArgument(instr)) {
-							outputargs.insert(instr);
-						}
-					}
-				}
-			}
-
-			// constants defined in functions such as structs/arrays are declared in the global scope now. 
-			if (auto globl = dyn_cast<GlobalVariable>(*it)) {
-				// if the global is defined in the function but not in the region, then it is an input 
-				// argument. If it is defined in region, it is also an output argument.  Outputs are not 
-				// precise since  we cannot see in which basic blocks ConstantExprs are used since 
-				// getAsInstruction() results in "Global is referenced by parentless instruction" error. 
-				if (declaredInArea(M, functionBounds)) {
-					if (!declaredInArea(M, regionBounds)) { inputargs.insert(globl);  }
-					if ( declaredInArea(M, regionBounds)) { outputargs.insert(globl); }
-				}
-			}
-		}
-	}
-#endif
-
-	// basic type constants (i.e. int / floats) have to be checked separately.
-	// Every constant that has the same constant value and are used in the region
-	// are added to the input list. You really shouldn't have equal constants defined more than
-	// once, though.
-	// This works fine unless you start casting such constants and you end up having literal 
-	// values that do not have corresponding alloca instruction. So... don't do arbitrary 
-	// casting inside the region.  
-	// if outsideRegion is true, then I is outside the region and thus args is outputargs.
-	// if it is false, then we are looking for inputargs.
-	static void analyzeConstants(Instruction *I, 
-								 bool  outsideRegion, // is I outside the region?
-								 DenseSet<Value *>& args,
-								 const AreaLoc& regionBounds,
-								 const DenseSet<ValuePair>& constants) {
-		for (Value *V: I->operand_values()) {
-			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
-			for (const ValuePair& constant: constants) {
-				if (constant.first == V) {
-					Metadata *M = getMetadata(constant.second); // get alloca instruction info;
-					if (!M) { continue; }
-					if (!outsideRegion && !declaredInArea(M, regionBounds)) { args.insert(constant.second); }
-					if ( outsideRegion &&  declaredInArea(M, regionBounds)) { args.insert(constant.second); }
-				}
-			}
-		}
-	}
-
-
 	// compares M's line parameter to AreaLoc, returns true if number is between.
 	static bool declaredInArea(Metadata *M, const AreaLoc& A) {
 		unsigned linenum = std::numeric_limits<unsigned>::max();
@@ -540,7 +433,6 @@ namespace {
 		return (DLV->getArg() != 0);
 	}
 
-	struct VariableInfo { std::string name; std::string type; bool isfunptr; bool isconstq; bool isstatic; };
 
 	// extracts the type of the provided debuginfo type as a string. Follows the pointers 
 	// as necessary. std::pair is returned because function pointers have to be treated 
@@ -744,14 +636,12 @@ namespace {
 			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
 				Instruction *I = &*instrit;
 				findInputs(I, functionBounds, regionBounds, constants, inputprevious, inputargs); 
-				//analyzeConstants(I, false, inputargs, regionBounds, constants);
 			}
 
 			for (auto blockit = successors.begin(); blockit != successors.end(); ++blockit) 
 			for (auto instrit = (*blockit)->begin(); instrit != (*blockit)->end(); ++instrit) {
 				Instruction *I = &*instrit;
 				findOutputs(I, functionBounds, regionBounds, constants, outputprevious, outputargs); 
-				//analyzeConstants(I, true, outputargs, regionBounds, constants);
 			}
 
 			//writing stuff in xml-like format
