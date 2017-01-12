@@ -258,7 +258,6 @@ namespace {
 			}
 		}
 
-
 		// we also have to look for things like local static consts.
 		for (GlobalVariable& G: F->getParent()->globals()) {
 			Metadata *M = getMetadata(&G);
@@ -272,6 +271,26 @@ namespace {
 		}
 
 		return out;
+	}
+
+// finds all reachable basic blocks after exiting from the region.
+	static DenseSet<BasicBlock *> collectSuccessorBasicBlocks(Region *R) {
+		DenseSet<BasicBlock *> visited; 
+		std::deque<BasicBlock *> stack;
+
+		stack.push_back(R->getEntry());
+		while (stack.size() != 0) { 
+			// pick the block and expand it. If it has been visited before, we do not expand it
+			BasicBlock *current = stack.front();
+			stack.pop_front();
+			if (visited.find(current) != visited.end()) { continue; }
+			visited.insert(current);
+			for (auto it = succ_begin(current); it != succ_end(current); ++it) { stack.push_back(*it); }
+		}
+
+		// remove basic blocks belonging to the region.
+		for (auto it = R->block_begin(); it != R->block_end(); ++it) { visited.erase(*it); }
+		return visited;
 	}
 
 	static DenseSet<Value *> DFSInstruction(Value *I) {
@@ -310,43 +329,7 @@ namespace {
 		return visited;
 	}
 
-	//helper methods + DFS routine for finding all reachable blocks starting at some 
-	//basic block BB. 
-	typedef void (EnqueueBlockFunc)(std::deque<BasicBlock *>&, BasicBlock *);
-
-	static void pushSuccessors(std::deque<BasicBlock *>& stack, BasicBlock *BB) {
-		for (auto it = succ_begin(BB); it != succ_end(BB); ++it) { stack.push_back(*it); }
-	}
-
-	static void pushPredecessors(std::deque<BasicBlock *>& stack, BasicBlock *BB) {
-		for (auto it = pred_begin(BB); it != pred_end(BB); ++it) { stack.push_back(*it); }
-	}
-
-	static DenseSet<BasicBlock *> DFSBasicBlocks(BasicBlock *BB, EnqueueBlockFunc enqueueFunc) {
-		DenseSet<BasicBlock *> visited; 
-		
-		std::deque<BasicBlock *> stack;
-		stack.push_back(BB);
-		
-		while (stack.size() != 0) { 
-			BasicBlock *current = stack.front();
-			stack.pop_front();
-			// pick the block and expand it. If it has been visited before, we do not expand it
-			if (visited.find(current) != visited.end()) { continue; }
-			visited.insert(current);
-			enqueueFunc(stack, current);
-		}
-		
-		return visited;
-	}
-
-	// after DFSBasicBlocks routine we might end up having basic blocks belonging to a region 
-	// in the returned basic block set. We want to remove those. 
-	static void removeOwnBlocks(DenseSet<BasicBlock *>& blocks, Region *R) {
-		for (auto it = R->block_begin(); it != R->block_end(); ++it) { blocks.erase(*it); }
-	}
-
-
+	
 	static void findInputs(Instruction *I, 
 						   const AreaLoc& funcloc, 
 						   const AreaLoc& regionloc,
@@ -622,6 +605,7 @@ namespace {
 
 			
 			if (!inRegionList(regionlist, F, R)) { return false; }
+			std::string outfilename = generateFilename(F, R);
 			AreaLoc regionBounds = getRegionLoc(R);
 			AreaLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
@@ -633,13 +617,8 @@ namespace {
 				 constant.second->dump();
 			}
 			
-			BasicBlock *b = R->getEntry();
-			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
-			removeOwnBlocks(predecessors, R);
-			std::string outfilename = generateFilename(F, R);
 
-			DenseSet<BasicBlock *> successors = DFSBasicBlocks(b, pushSuccessors);
-			removeOwnBlocks(successors, R);
+			DenseSet<BasicBlock *> successors = collectSuccessorBasicBlocks(R);
 
 			DenseSet<Value *> inputargs;
 			DenseSet<Value *> outputargs;
@@ -647,16 +626,15 @@ namespace {
 			DenseSet<Value *> inputprevious;
 			DenseSet<Value *> outputprevious;
 
-			for (auto blockit = R->block_begin(); blockit != R->block_end(); ++blockit) 
-			for (auto instrit = blockit->begin(); instrit != blockit->end(); ++instrit) {
-				Instruction *I = &*instrit;
-				findInputs(I, functionBounds, regionBounds, constants, inputprevious, inputargs); 
+			// find inputs / outputs.
+			for (BasicBlock *BB: R->blocks()) 
+			for (Instruction& I: BB->getInstList()) {
+				findInputs(&I, functionBounds, regionBounds, constants, inputprevious, inputargs); 
 			}
 
-			for (auto blockit = successors.begin(); blockit != successors.end(); ++blockit) 
-			for (auto instrit = (*blockit)->begin(); instrit != (*blockit)->end(); ++instrit) {
-				Instruction *I = &*instrit;
-				findOutputs(I, functionBounds, regionBounds, constants, outputprevious, outputargs); 
+			for (BasicBlock *BB: successors)
+			for (Instruction& I: BB->getInstList()) {
+				findOutputs(&I, functionBounds, regionBounds, constants, outputprevious, outputargs); 
 			}
 
 			//writing stuff in xml-like format
