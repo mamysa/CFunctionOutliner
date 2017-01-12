@@ -116,7 +116,6 @@ namespace {
 		return funcname + '_' + blocknames[0] + '_'  + blocknames[1];
 	}
 
-
 	// finds first / last line numbers of the basic block. 
 	static inline AreaLoc getBBLoc(const BasicBlock *BB) {
 		unsigned min = std::numeric_limits<unsigned>::max();
@@ -241,7 +240,7 @@ namespace {
 	// load 124 into constant %x; %2 = load %a; %3 = add 124 %2. 
 	// Solution: look at alloca instructions that only have one user and that 
 	// user is store instruction.
-	static DenseSet<ValuePair> findPossibleLocalConstants(Function *F) {
+	static DenseSet<ValuePair> findPossibleLocalConstants(Function *F, const AreaLoc& functionBounds) {
 		DenseSet<ValuePair> out;
 
 		for (BasicBlock& BB: F->getBasicBlockList())
@@ -258,6 +257,20 @@ namespace {
 				}
 			}
 		}
+
+
+		// we also have to look for things like local static consts.
+		for (GlobalVariable& G: F->getParent()->globals()) {
+			Metadata *M = getMetadata(&G);
+			if (!M) { continue; }
+			if (G.isConstant() && declaredInArea(M, functionBounds)) {
+				Value *operand = G.getOperand(0);
+				ValuePair pair(operand, &G);
+				if (isa<ConstantInt>(operand)) { out.insert(pair); }
+				if (isa<ConstantFP>(operand))  { out.insert(pair); }
+			}
+		}
+
 		return out;
 	}
 
@@ -433,7 +446,6 @@ namespace {
 		return (DLV->getArg() != 0);
 	}
 
-
 	// extracts the type of the provided debuginfo type as a string. Follows the pointers 
 	// as necessary. std::pair is returned because function pointers have to be treated 
 	// slightly differently and in that case we do not have to append variable name.
@@ -529,15 +541,18 @@ namespace {
 
 		for (unsigned& t: tags) {
 			switch (t) {
-				case dwarf::DW_TAG_pointer_type:     { typestr += "*"                          ; break; }
-				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr           ; break; }
-				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr           ; break; }
-				case dwarf::DW_TAG_enumeration_type: { typestr = "enum " + typestr             ; break; }
-				case dwarf::DW_TAG_typedef:          { 							               ; break; }
-				case dwarf::DW_TAG_const_type:       { typestr += "const "; ret.isconstq = true; break; }
+				case dwarf::DW_TAG_pointer_type:     { typestr += "*"               ; break; }
+				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
+				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr; break; }
+				case dwarf::DW_TAG_enumeration_type: { typestr = "enum "   + typestr; break; }
+				case dwarf::DW_TAG_typedef:          { 							    ; break; }
+				case dwarf::DW_TAG_const_type:       { typestr += "const "          ; break; }
 			}
 		}
 
+		// if we have const in the end, the variable cannot be modified. Extractor needs to know this
+		// in order not to restore such variables.
+		if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
 		ret.type = typestr;
 		return ret; 
 	}
@@ -607,16 +622,16 @@ namespace {
 
 			
 			if (!inRegionList(regionlist, F, R)) { return false; }
+			AreaLoc regionBounds = getRegionLoc(R);
+			AreaLoc functionBounds = getFunctionLoc(F);
+			DenseSet<int> regionExit = regionGetExitingLocs(R);
 
-			DenseSet<ValuePair> constants = findPossibleLocalConstants(F);
+			DenseSet<ValuePair> constants = findPossibleLocalConstants(F, functionBounds);
 			errs() << "Constants!\n";
 			for (auto constant: constants) {
 				 constant.first->dump();
 				 constant.second->dump();
 			}
-			AreaLoc regionBounds = getRegionLoc(R);
-			AreaLoc functionBounds = getFunctionLoc(F);
-			DenseSet<int> regionExit = regionGetExitingLocs(R);
 			
 			BasicBlock *b = R->getEntry();
 			DenseSet<BasicBlock *> predecessors = DFSBasicBlocks(b, pushPredecessors); 
