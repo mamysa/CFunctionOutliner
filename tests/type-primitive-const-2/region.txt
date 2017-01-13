@@ -1,4 +1,0 @@
-!main
-entry
-if.then
-if.else

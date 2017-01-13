@@ -1,4 +1,0 @@
-!main
-for.cond
-for.body
-for.inc
