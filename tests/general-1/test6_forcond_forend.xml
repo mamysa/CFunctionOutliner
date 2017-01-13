@@ -1,0 +1,10 @@
+<extractinfo>
+	<variable>
+		<name>a</name>
+		<type>int const *</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+</extractinfo>

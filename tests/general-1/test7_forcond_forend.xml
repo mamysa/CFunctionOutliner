@@ -1,0 +1,11 @@
+<extractinfo>
+	<variable>
+		<name>mystaticvar</name>
+		<type>int</type>	
+		<isstatic>1</isstatic>
+	</variable>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+</extractinfo>

@@ -1,0 +1,15 @@
+<extractinfo>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>aptr</name>
+		<type>int * const</type>	
+		<isconstq>1</isconstq>
+	</variable>
+</extractinfo>

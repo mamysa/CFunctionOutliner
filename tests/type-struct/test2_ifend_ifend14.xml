@@ -1,0 +1,16 @@
+<extractinfo>
+	<variable>
+		<name>a</name>
+		<type>struct mystruct const</type>	
+		<isconstq>1</isconstq>
+	</variable>
+	<variable>
+		<name>b</name>
+		<type>struct mystruct const</type>	
+		<isconstq>1</isconstq>
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+</extractinfo>

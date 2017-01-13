@@ -1,0 +1,18 @@
+<extractinfo>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>u</name>
+		<type>void *</type>	
+	</variable>
+	<variable>
+		<name>v</name>
+		<type>void const *</type>	
+	</variable>
+</extractinfo>

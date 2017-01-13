@@ -1,0 +1,2 @@
+test1: for.cond => for.end
+test2: for.cond => for.end

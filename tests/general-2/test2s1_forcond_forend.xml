@@ -1,0 +1,10 @@
+<extractinfo>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>xptr</name>
+		<type>union myunion *</type>	
+	</variable>
+</extractinfo>

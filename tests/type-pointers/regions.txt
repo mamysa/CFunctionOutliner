@@ -1,0 +1,6 @@
+test1: for.cond => for.end
+test2: for.cond => for.end
+test3: for.cond => for.end
+test4: for.cond => for.end
+test5: for.cond => for.end
+test6: for.cond => for.end

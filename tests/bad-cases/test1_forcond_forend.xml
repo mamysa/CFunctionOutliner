@@ -1,0 +1,14 @@
+<extractinfo>
+	<variable>
+		<name>i</name>
+		<type>int</type>
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>
+	</variable>
+	<variable>
+		<name>mystruct</name>
+		<type>struct needstobecomeglobal</type>
+	</variable>
+</extractinfo>

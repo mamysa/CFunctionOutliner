@@ -1,0 +1,16 @@
+<extractinfo>
+	<variable>
+		<name>mystaticconst</name>
+		<type>int const</type>	
+		<isstatic>1</isstatic>
+		<isconstq>1</isconstq>
+	</variable>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+</extractinfo>
