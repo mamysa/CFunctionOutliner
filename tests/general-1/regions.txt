@@ -7,3 +7,5 @@ test6: for.cond => for.end
 test7: for.cond => for.end 
 test8: for.cond => for.end 
 test9: for.cond => for.end 
+test10: entry => sw.epilog 
+test11: for.end => sw.epilog 

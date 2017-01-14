@@ -105,3 +105,36 @@ int test9(void) {
 	out = out * 2;
 	return out;
 }
+
+// Switch case test
+enum myenum { ONE, TWO, THREE };
+int test10() {
+	enum myenum a = ONE;
+	int out = 0;
+
+	switch (a) {
+		case ONE:   { out = 1; break; }
+		case TWO:   { out = 2; break; }
+		case THREE: { out = 3; break; }
+		default: { out = 13; }
+	}
+
+	return out;
+}
+
+// Switch case test that is not initialized in entry basic block.
+int test11() {
+	enum myenum a = ONE;
+	int out = 0;
+	int i;
+	for (i = 0; i < 5; i++) { out += i; }
+//--REGION start
+	switch (a) {
+		case ONE:   { out = 1; break; }
+		case TWO:   { out = 2; break; }
+		case THREE: { out = 3; break; }
+		default: { out = 13; }
+	}
+//--REGION END
+	return out;
+}

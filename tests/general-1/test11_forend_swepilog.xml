@@ -1,0 +1,10 @@
+<extractinfo>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>a</name>
+		<type>enum myenum</type>	
+	</variable>
+</extractinfo>
