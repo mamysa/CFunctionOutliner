@@ -34,17 +34,41 @@ static cl::opt<std::string> OutDirectory("out",
 	   		cl::value_desc("outputdirectory"), cl::Required  );
 
 namespace {
-
 	typedef std::pair<unsigned,unsigned> AreaLoc;
 	typedef std::pair<Value *, Value *>  ValuePair;
 	struct VariableInfo { std::string name; std::string type; bool isfunptr; bool isconstq; bool isstatic; };
 
+	// XML writer helper.
+	static std::string XMLOpeningTag(const char *, int);
+	static std::string XMLClosingTag(const char *, int);
+	template<typename T> static std::string XMLElement(const char *, T, int);
+
+	// various I/O / region validation funcs.
+	static void readRegionFile(StringMap<StringSet<>>&, const std::string&);
+	static bool inRegionList(StringMap<StringSet<>>&, Function *, Region *);
+	static std::string generateFilename(Function *, Region *);
+	static void writeVariableInfo(VariableInfo&, bool, std::ofstream&);
+	static void writeLocInfo(AreaLoc&, const char *, std::ofstream&);
+
+	// various functions dealing with finding line numbers for various things.
+	static inline AreaLoc getBBLoc(const BasicBlock *);
 	static AreaLoc getRegionLoc(const Region *);
 	static AreaLoc getFunctionLoc(const Function *);
+	static DenseSet<int> regionGetExitingLocs(Region *);
+
 	static Metadata * getMetadata(Value *);
 	static bool declaredInArea(Metadata *, const AreaLoc&);
 	static bool isArgument(Value *);
-	static DenseSet<int> regionGetExitingLocs(Region *R);
+	static DenseSet<BasicBlock *> collectSuccessorBasicBlocks(Region *);
+	static DenseSet<Value *> DFSInstruction(Value *);
+	static DenseSet<ValuePair> findBasicConstants(Function *, const AreaLoc&);
+	static void findInputs(Instruction *, const AreaLoc&, const AreaLoc&, const DenseSet<ValuePair>&,
+						   DenseSet<Value *>&, DenseSet<Value *>&);
+	static void findOutputs(Instruction *, const AreaLoc&, const AreaLoc&, const DenseSet<ValuePair>&,
+						    DenseSet<Value *>&, DenseSet<Value *>&);
+	static VariableInfo getTypeString(DIType *, StringRef);
+	static VariableInfo getVariableInfo(Value *);
+	static std::string getFunctionReturnType(const Function *);
 
 
 	// various XML helper functions as we are saving all the extracted info
@@ -82,15 +106,6 @@ namespace {
 		if (it == SM.end()) { return false; }
 		const StringSet<>& funclist = it->getValue(); 
 		if (funclist.find(F->getName()) == funclist.end()) { return false; }
-
-		// extracting the function itself is a bit useless and causes problems for 
-		// code extractor... so we ignore it for now..
-#if 0
-		if (R->isTopLevelRegion()) { 
-			errs() << "Skipping top level region...\n";
-			return false; 
-		}
-#endif
 
 		return true;
 	}
@@ -240,7 +255,7 @@ namespace {
 	// load 124 into constant %x; %2 = load %a; %3 = add 124 %2. 
 	// Solution: look at alloca instructions that only have one user and that 
 	// user is store instruction.
-	static DenseSet<ValuePair> findPossibleLocalConstants(Function *F, const AreaLoc& functionBounds) {
+	static DenseSet<ValuePair> findBasicConstants(Function *F, const AreaLoc& functionBounds) {
 		DenseSet<ValuePair> out;
 
 		for (BasicBlock& BB: F->getBasicBlockList())
@@ -358,7 +373,8 @@ namespace {
 			}
 		}
 
-		// finally, primitive constants such as floats and ints have to be checked separately.
+		// if we happen to have some instructions using magic numbers, check those against 
+		// basic consts list.
 		for (Value *V : I->operands()) {
 			if (!isa<ConstantInt>(V) && !isa<ConstantFP>(V)) { continue; }
 			for (const ValuePair& constant: constants) {
@@ -502,10 +518,9 @@ namespace {
 				}
 			}
 
-			typestr = lhs + '(' + typestr + variablename.str() + ')' + rhs;
-			ret.type =  typestr;
+			if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
+			ret.type = lhs + '(' + typestr + variablename.str() + ')' + rhs;
 			ret.isfunptr = true;
-
 			return ret; 
 		}
 
@@ -540,7 +555,7 @@ namespace {
 		return ret; 
 	}
 
-	// gets function's return type
+	// self-explanatory. 
 	static std::string getFunctionReturnType(const Function *F) {
 		DISubprogram *SP = cast<DISubprogram>(F->getMetadata(0));
 		if (auto *ST = dyn_cast<DISubroutineType>(SP->getRawType())) {
@@ -597,7 +612,6 @@ namespace {
 		bool runOnRegion(Region *R, RGPassManager &RGM) override {
 			// we really shouldn't try to extract from modules with no metadata...
 			Function *F = R->getEntry()->getParent();
-			errs() << R->getNameStr() << "\n";
 			if (!F->hasMetadata()) { 
 				errs() << "Function is missing debug metadata, skipping...\n";
 				return false;
@@ -610,14 +624,7 @@ namespace {
 			AreaLoc functionBounds = getFunctionLoc(F);
 			DenseSet<int> regionExit = regionGetExitingLocs(R);
 
-			DenseSet<ValuePair> constants = findPossibleLocalConstants(F, functionBounds);
-			errs() << "Constants!\n";
-			for (auto constant: constants) {
-				 constant.first->dump();
-				 constant.second->dump();
-			}
-			
-
+			DenseSet<ValuePair> constants = findBasicConstants(F, functionBounds);
 			DenseSet<BasicBlock *> successors = collectSuccessorBasicBlocks(R);
 
 			DenseSet<Value *> inputargs;
@@ -637,10 +644,11 @@ namespace {
 				findOutputs(&I, functionBounds, regionBounds, constants, outputprevious, outputargs); 
 			}
 
-			//writing stuff in xml-like format
+			//write collected info using xml-like format
 			std::ofstream outfile;
 			outfile.open(OutDirectory + outfilename + ".xml", std::ofstream::out);
 			outfile << XMLOpeningTag("extractinfo", 0);
+			outfile << XMLElement("toplevel", R->isTopLevelRegion(), 1);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
 
@@ -659,18 +667,8 @@ namespace {
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
 			outfile << XMLElement("funcreturntype", getFunctionReturnType(F), 1);
 			outfile << XMLElement("funcname", outfilename, 1);
-			outfile << XMLElement("toplevel", R->isTopLevelRegion(), 1);
-			errs() << "fnreturntype: " << getFunctionReturnType(F) << "\n";
-
-
-
 			outfile << XMLClosingTag("extractinfo", 0);
 			outfile.close();
-
-
-			// TODO remove me later!
-			for (Value *V: inputargs) { V->dump(); }
-			for (Value *V: outputargs) { V->dump(); }
 
 			return false;
 		}
