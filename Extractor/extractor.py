@@ -26,31 +26,22 @@ class FileInfo:
             n = self.regloc[i].count('{')
             if n != 0: 
                 #ensure that we don't have anything following the opening brace. 
-                assert(self.regloc[i].split('{')[1].rstrip(' \n') == '')
+                if self.regloc[i].split('{')[1].rstrip(' \n') != '':
+                    raise Exception('Non-empty string after closing brace!')
                 self.funloc[i] = self.regloc[i]
                 del self.regloc[i]
                 self.reginfo.start = i + 1
                 break
-        assert(self.reginfo.start != self.reginfo.end)
+        if self.reginfo.start == self.reginfo.end:
+            raise Exception('Empty region!')
+
 
     # Extracted regions sometimes do not include a closing brace so we need to find the line that
     # has it in the rest of the function. Assumes that closing brace is located on its own line.
     # We are only expecting a single brace
     def region_find_closing_brace(self):
-        numopeningbraces = 0
-        numclosingbraces = 0
-        for line in self.regloc.values():
-            ## remove literal strings / chars from the line. 
-            line = re.sub(r'\'(.)*\'', '', line, re.M | re.I)
-            line = re.sub(r'\"(\\.|[^"])*\"', '', line, re.M | re.I) 
-# count number of braces. braces are now expected to be balanced aside from the last one closing
-# off the region. 
-            numopeningbraces = numopeningbraces + line.count('{')
-            numclosingbraces = numclosingbraces + line.count('}')
-        # take the first line that has closing brace in it...
-        print (numclosingbraces, numopeningbraces)
+        (numopeningbraces, numclosingbraces) = brace_count(self.regloc)
         while numclosingbraces < numopeningbraces:
-            print (numclosingbraces, numopeningbraces)
             for i in range(self.reginfo.end + 1, self.funinfo.end + 1): 
                 temp = self.funloc[i].lstrip(' \t')
                 temp = temp.rstrip(' \n')
@@ -68,23 +59,18 @@ class FileInfo:
                 # FIXME low priority. In cases I have tested the program with this condition doesn't even
                 # happen. 
                 if len(temp) != 0: 
-                    assert(False) # we have gone too far into the rest of the function. This should't happen
+                    raise Exception('Could not find closing brace!')
 
         # save brace numbers for function header insertion!
         self.reginfo.closingbracenum = numclosingbraces
         self.reginfo.openingbracenum = numopeningbraces 
 
-
+    # if function is missing closing braces, add the number necessary.
     def function_add_closing_brace(self):
-        numopeningbraces = 0
-        numclosingbraces = 0
-        for key in sorted(self.funloc.keys()):
-            line = re.sub(r'\'(.)*\'', '', self.funloc[key], re.M | re.I)
-            line = re.sub(r'\"(\\.|[^"])*\"', '', line, re.M | re.I) 
-            numopeningbraces = numopeningbraces + line.count('{')
-            numclosingbraces = numclosingbraces + line.count('}')
-        if numclosingbraces < numopeningbraces:
+        (numopeningbraces, numclosingbraces) = brace_count(self.funloc)
+        while numclosingbraces < numopeningbraces:
             self.funinfo.end = self.funinfo.end + 1
+            numclosingbraces = numclosingbraces + 1
             self.funloc[self.funinfo.end] = '}\n'
 
     def extract(self):
@@ -100,8 +86,7 @@ class FileInfo:
         sys.stdout.write(function.define_return_value(self.toplevel))
         for num in sorted(self.regloc.keys()):
             sys.stdout.write(self.regloc[num])
-        if len(function.special_out) == 0:
-            sys.stdout.write(function.store_retvals_and_return(self.toplevel))
+        sys.stdout.write(function.store_retvals_and_return(self.toplevel))
         
         # after inserting function header number of braces will be unbalanced, insert closing 
         # brace if necessary.
@@ -158,10 +143,21 @@ class Variable:
         return '<Variable name:%s type:%s isoutput:%s>' % (self.name, self.type, self.isoutput)
 
     def as_argument(self):
-        if self.isfunptr == True:
-            return self.type
+        if self.isfunptr: return self.type
         return ('%s %s') % (self.type, self.name)
 
+    # used for declaring variables. 
+    # the only difference from as_argument is how static variables are treated. If static variable is 
+    # declared inside the region, we also have to declare it as static outside.
+    # If the variable is declared as static outside the region, we do not need to know the fact that it 
+    # is static inside the region.
+    def declare(self):
+        decl = '%s %s' % (self.type, self.name)
+        if self.isfunptr: decl = self.type 
+        if self.isstatic: decl = 'static ' + decl
+        return decl
+
+    # read xml into variable type.
     @staticmethod
     def create(xml):
         name = xml.find('name')
@@ -184,7 +180,7 @@ class Variable:
 
 # if condition class for possible return / goto statements inside the region that we have to check 
 # in the caller function
-class IfCondition:
+class RegionExit:
     def __init__(self, cond, var, stmt):
         self.cond = cond
         self.var  = var
@@ -220,14 +216,13 @@ class Function:
         temp = temp.lstrip('\t ')
         temp = temp.rstrip('\n; ')
 
-        
         retstmt = line_contains(temp, 'return')
         if retstmt != (None, None):
             flg = Variable(self.exitflagname  % (self.funname, loc), 'char')
             val = None 
             if (retstmt[1] != None): 
                 val = Variable(self.exitvaluename % (self.funname, loc), self.funrettype)
-            self.special_out.append(IfCondition(flg, val, 'return')) # need this fn_restore_variables procedure
+            self.special_out.append(RegionExit(flg, val, 'return')) # need this fn_restore_variables procedure
             
             # store these variables in the struct and replace current line with it
             # we do not have to restore all the variables if we are returning.
@@ -244,7 +239,7 @@ class Function:
         if gotostmt != (None, None):
             flg = Variable(self.exitflagname  % (self.funcname, loc), 'char')
             val = Variable(gotostmt[1], 'label') # this should be label
-            self.special_out.append(IfCondition(flg, val, 'goto')) 
+            self.special_out.append(RegionExit(flg, val, 'goto')) 
 
             ## store flag
             rett = self.retvalname % (self.funcname)
@@ -281,12 +276,17 @@ class Function:
 
     # Defines a structure that is returned from extracted function.
     # If region is toplevel, we do not need such structure - return value directly.
+    # Const qualified inputs should not be stored in return structure.
     def declare_return_type(self, toplevel):
         if toplevel: return ''
 
         args = '' 
-        for var in self.inputs:  args = args + '\t' + var.as_argument() + ';\n' 
-        for var in self.outputs: args = args + '\t' + var.as_argument() + ';\n' 
+        for var in self.inputs:  
+            if var.isconstq: continue
+            args = args + '\t' + var.as_argument() + ';\n' 
+
+        for var in self.outputs: 
+            args = args + '\t' + var.as_argument() + ';\n' 
 
         for cond in self.special_out:
             args = args + '\t' + cond.cond.as_argument() + ';\n'
@@ -314,25 +314,33 @@ class Function:
     # Stores all local variable in return structure before exiting extracted function.
     # Regions with return statements are handled somewhere else...
     # If region is toplevel, we do not need this!
+    # const-qualified inputs should not be stored!
     def store_retvals_and_return(self, toplevel):
         if toplevel: return ''
 
         args = ''
         rett = self.retvalname % (self.funname)
-        for var in self.inputs:  args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
-        for var in self.outputs: args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
+        for var in self.inputs:  
+            if var.isconstq: continue
+            args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
+        for var in self.outputs: 
+            args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
         return '%sreturn %s;\n' % (args, rett)
 
     # Restores local variables in the caller from the structure returned by
     # extracted function, definining it if necessary. 
     # If region is toplevel, we do not do this!
+    # const-qualified inputs should not be restored!
     def restore_retvals(self, toplevel):
         if toplevel: return ''
 
         args = ''
         rett = self.retvalname % (self.funname)
-        for var in self.inputs:  args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
-        for var in self.outputs: args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
+        for var in self.inputs:  
+            if var.isconstq: continue
+            args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
+        for var in self.outputs: 
+            args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
 
         # generate if statements if applicable
         # for return statements, we can also have return statement without any return values, we have 
@@ -356,7 +364,7 @@ def line_contains(line, string):
         rhs = line[(idx+len(string)):].strip(' \n;')
         lhstemp = strip_char_string_literals(lhs)
         rhstemp = strip_char_string_literals(rhs)
-        assert(rhstemp.find('}') == -1 and lhstemp.find('{') == -1) ## TODO it also matches literal braces...
+        assert(rhstemp.find('}') == -1 and lhstemp.find('{') == -1)
         assert(not line[idx + len(string)].isalnum())
         assert(idx == 0 or not line[idx-1].isalnum())
         assert(rhstemp.find(';') == -1) # must not have anything after return statement
@@ -373,7 +381,6 @@ def brace_count(loc):
         numopeningbraces = numopeningbraces + line.count('{')
         numclosingbraces = numclosingbraces + line.count('}')
     return (numopeningbraces, numclosingbraces)
-
 
 # remove all literal chars / literal strings from the line.
 def strip_char_string_literals(line):
