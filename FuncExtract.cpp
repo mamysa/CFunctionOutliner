@@ -21,8 +21,6 @@
 #include <limits>
 #include <algorithm>
 
-
-
 using namespace llvm;
 
 static cl::opt<std::string> BBListFilename("bblist", 
@@ -240,7 +238,6 @@ namespace {
 
 			StringSet<>& lst = S.find(rhs)->getValue();
 			lst.insert(lhs);
-			errs() << rhs <<"\n";
 		}
 
 		stream.close();
@@ -648,7 +645,6 @@ namespace {
 			std::ofstream outfile;
 			outfile.open(OutDirectory + outfilename + ".xml", std::ofstream::out);
 			outfile << XMLOpeningTag("extractinfo", 0);
-			outfile << XMLElement("toplevel", R->isTopLevelRegion(), 1);
 			writeLocInfo(regionBounds, "region", outfile);
 			writeLocInfo(functionBounds, "function", outfile);
 
@@ -667,6 +663,7 @@ namespace {
 			for (int& i : regionExit)   { outfile << XMLElement("regionexit", i, 1); }
 			outfile << XMLElement("funcreturntype", getFunctionReturnType(F), 1);
 			outfile << XMLElement("funcname", outfilename, 1);
+			outfile << XMLElement("toplevel", R->isTopLevelRegion(), 1);
 			outfile << XMLClosingTag("extractinfo", 0);
 			outfile.close();
 
