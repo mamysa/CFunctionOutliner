@@ -146,17 +146,6 @@ class Variable:
         if self.isfunptr: return self.type
         return ('%s %s') % (self.type, self.name)
 
-    # used for declaring variables. 
-    # the only difference from as_argument is how static variables are treated. If static variable is 
-    # declared inside the region, we also have to declare it as static outside.
-    # If the variable is declared as static outside the region, we do not need to know the fact that it 
-    # is static inside the region.
-    def declare(self):
-        decl = '%s %s' % (self.type, self.name)
-        if self.isfunptr: decl = self.type 
-        if self.isstatic: decl = 'static ' + decl
-        return decl
-
     # read xml into variable type.
     @staticmethod
     def create(xml):
@@ -171,7 +160,7 @@ class Variable:
         if name == None or type == None:
             raise Exception('Missing variable info');
         
-        variable = Variable(name.text, type.text)
+        variable = Variable(name.text, type.text.strip())
         if isoutput != None: variable.isoutput = bool(isoutput.text)
         if isfunptr != None: variable.isfunptr = bool(isfunptr.text)
         if isstatic != None: variable.isstatic = bool(isstatic.text)
@@ -340,7 +329,9 @@ class Function:
             if var.isconstq: continue
             args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
         for var in self.outputs: 
-            args = args + ('%s = %s.%s;\n' % (var.as_argument(), rett, var.name))
+            static = ''
+            if var.isstatic: static = 'static '
+            args = args + ('%s%s = %s.%s;\n' % (static, var.as_argument(), rett, var.name))
 
         # generate if statements if applicable
         # for return statements, we can also have return statement without any return values, we have 
