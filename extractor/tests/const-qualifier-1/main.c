@@ -9,7 +9,7 @@ int main() {
 
 	const int bconst = b;	
 	if (bconst == 15) { out += 1; }
-	else { out += 2; }
+	else { out += aconst; }
 	
 	return out += bconst;
 }

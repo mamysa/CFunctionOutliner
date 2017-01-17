@@ -17,6 +17,7 @@ TESTFILES = [
     'early-return-1/', 'main.c', 'region.txt', 'main_entry_return.xml',
     'const-qualifier-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'static-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
+    'goto-1/', 'main.c', 'region.txt', 'main_entry_myreturnlabel.xml',
 ]
 
 TEMPFILES = ['.temp/', 'temp.ll', 'extracted.c', 'extracted.out', 'original.out']
@@ -60,7 +61,7 @@ def runpass():
         execextract  = TEMPFILES[0] + TEMPFILES[3]
         execoriginal = TEMPFILES[0] + TEMPFILES[4]
         extractcompile  = CLANGCOMPILE % (source, execextract) 
-        originalcompile = CLANGCOMPILE % (source, execoriginal) 
+        originalcompile = CLANGCOMPILE % (extractsrc, execoriginal) 
         subprocess.call(extractcompile,  shell=True)
         subprocess.call(originalcompile, shell=True)
 

@@ -142,9 +142,32 @@ class Variable:
     def __repr__(self):
         return '<Variable name:%s type:%s isoutput:%s>' % (self.name, self.type, self.isoutput)
 
-    def as_argument(self):
+    def as_function_argument(self):
         if self.isfunptr: return self.type
         return ('%s %s') % (self.type, self.name)
+
+    # have to get rid of const qualifiers
+    # Should not allow input constants to be in the struct.
+    def as_struct_member(self):
+        if not self.isoutput and self.isconstq: return ''
+        ntype = list(filter(lambda x: x != 'const', self.type.split(' ')))
+        ntype = ' '.join(ntype).rstrip(' ')
+        return '\t%s %s;\n' % (ntype, self.name)
+
+    # Declares a variable and initializes it from struct. Static variables have to be initialized to some constant first.
+    def declare_and_initialize(self, struct):
+        assert(self.isoutput)
+        if self.isstatic: return  'static %s %s = 0;\n%s = %s.%s;\n' % (self.type, self.name, self.name, struct, self.name)
+        if self.isfunptr: return '%s = %s.%s;\n' % (self.type, struct, self.name)
+        return '%s %s = %s.%s;\n' % (self.type, self.name, struct, self.name)
+
+    def restore(self, struct):
+        if self.isconstq: return '' 
+        return '%s = %s.%s;\n' % (self.name, struct, self.name)
+
+    def store(self, struct):
+        if not self.isoutput and self.isconstq: return ''
+        return '%s.%s = %s;\n' % (struct, self.name, self.name)
 
     # read xml into variable type.
     @staticmethod
@@ -170,16 +193,47 @@ class Variable:
 # if condition class for possible return / goto statements inside the region that we have to check 
 # in the caller function
 class RegionExit:
-    def __init__(self, cond, var, stmt):
-        self.cond = cond
-        self.var  = var
+    STMT_GOTO    = 0
+    STMT_RET     = 1
+    STMT_RETVOID = 2
+
+    def __init__(self, flg, val, storevar, stmt):
+        self.flgvar = flg #flag variable. If we return/goto we set this flag to 1 
+        self.valvar = val #if we return some value, we store that value in this variable
+        self.storevar = storevar  #variable to store in variable above
         self.stmt = stmt
+        self.flgvar.isoutput = True
+
+    # we don't need to add return value if we either return void or we go to some label.
+    def as_struct_member(self):
+        if self.stmt == RegionExit.STMT_GOTO:    return self.flgvar.as_struct_member()
+        if self.stmt == RegionExit.STMT_RETVOID: return self.flgvar.as_struct_member()
+        return self.flgvar.as_struct_member() + self.valvar.as_struct_member()
+
+    # returns the if statement that checks if condition flag is set and then adds return / goto 
+    # statements accordingly.
+    def make_conditional_stmt(self, struct):
+        val = ''
+        if self.stmt == RegionExit.STMT_GOTO:    val = 'goto %s;' % self.storevar.name
+        if self.stmt == RegionExit.STMT_RET :    val = 'return %s.%s;' % (struct, self.valvar.name)
+        if self.stmt == RegionExit.STMT_RETVOID: val = 'return;'
+        return 'if (%s.%s) { %s }\n' % (struct, self.flgvar.name, val)
+
+    # declares flags inside the region and sets them to 0
+    def initialize(self, struct):
+        return '%s.%s = 0;\n' % (struct, self.flgvar.name) 
+
+    # store flag and retval into return struct.
+    def store(self, struct):
+        val = ''
+        if self.stmt == RegionExit.STMT_RET: val = '%s.%s = %s;\n' % (struct, self.valvar.name, self.storevar.name) 
+        return '%s.%s = 1;\n%s' % (struct, self.flgvar.name, val)
 
 class Function:
     def __init__(self, funname, funrettype):
-        self.inputs = []
+        self.inputs  = []
         self.outputs = []
-        self.special_out = [] # for return / gotos within region. (see below)
+        self.special = [] # for return / gotos within region. (see below)
 
         self.funname    = funname     # name of the extracted function
         self.funrettype = funrettype  # return type of the original function
@@ -197,6 +251,14 @@ class Function:
         if var.isoutput: self.outputs.append(var)
         else: self.inputs.append(var)
 
+    # get extracted function's return type.
+    def get_self_return_type(self, toplevel):
+        if toplevel: return self.funrettype
+        return self.retvaltype % (self.funname)
+
+    def get_self_retval_name(self):
+        return self.retvalname % (self.funname)
+
     # replace return / goto statement in the region with setting flag to 1 and setting value to whatever
     # comes on the rhs of the return statement.
     # we expect return/goto statements formatted in a certain way.
@@ -204,47 +266,41 @@ class Function:
         temp = regloc[loc]
         temp = temp.lstrip('\t ')
         temp = temp.rstrip('\n; ')
+        rett = self.get_self_retval_name()
+
 
         retstmt = line_contains(temp, 'return')
         if retstmt != (None, None):
+            storeinto, storetarget, stmttype = None, None, RegionExit.STMT_RETVOID
             flg = Variable(self.exitflagname  % (self.funname, loc), 'char')
-            val = None 
-            if (retstmt[1] != None): 
-                val = Variable(self.exitvaluename % (self.funname, loc), self.funrettype)
-            self.special_out.append(RegionExit(flg, val, 'return')) # need this fn_restore_variables procedure
-            
-            # store these variables in the struct and replace current line with it
-            # we do not have to restore all the variables if we are returning.
-            rett = self.retvalname % (self.funname)
-            v1 = '%s.%s = %s;\n' % (rett, flg.name , '1')
-            v2 = ''
-            if (retstmt[1] != None): 
-                v2 = '%s.%s = %s;\n' % (rett, val.name , retstmt[1]) # store retstmt.rhs
-            regloc[loc] = '%s%sreturn %s;\n' % (v1, v2, rett)    # should also return 
+            if retstmt[1] != None: 
+                storetarget = Variable(retstmt[1], self.funrettype) 
+                storeinto   = Variable(self.exitvaluename % (self.funname, loc), self.funrettype) 
+                stmttype = RegionExit.STMT_RET
+
+            exit = RegionExit(flg, storeinto, storetarget, stmttype)
+            self.special.append(exit) 
+            regloc[loc] = '%sreturn %s;\n' % (exit.store(rett), rett)    
             return
 
         ## TODO 
         gotostmt = line_contains(temp, 'goto')
         if gotostmt != (None, None):
-            flg = Variable(self.exitflagname  % (self.funcname, loc), 'char')
-            val = Variable(gotostmt[1], 'label') # this should be label
-            self.special_out.append(RegionExit(flg, val, 'goto')) 
-
-            ## store flag
-            rett = self.retvalname % (self.funcname)
-            v1 = '%s.%s = %s;\n' % (rett, flg.name , '1')
-            regloc[loc] = '%s%s' % (v1, self.store_retvals_and_return())    
+            storeinto, storetarget, stmttype = None, None, RegionExit.STMT_RETVOID
+            flg = Variable(self.exitflagname  % (self.funname, loc), 'char')
+            storeinto   = Variable(self.exitvaluename % (self.funname, loc), self.funrettype) 
+            storetarget = Variable(gotostmt[1], self.funrettype) 
+            stmttype = RegionExit.STMT_GOTO 
+            exit = RegionExit(flg, storeinto, storetarget, stmttype)
+            self.special.append(exit) 
+            regloc[loc] = '%s%sreturn %s;\n' % (exit.store(rett), self.store_retvals_and_return(False), rett)    
 
     ## returns function definition.
     def get_fn_definition(self, toplevel):
         args = '' 
-        for var in self.inputs: args = args + var.as_argument() + ', '
+        for var in self.inputs: args = args + var.as_function_argument() + ', '
         args = args.rstrip(', ') 
-
-        rett = ''
-        if toplevel: rett = self.funrettype
-        else: rett = self.retvaltype % (self.funname)
-        return ('%s %s(%s) {\n') % (rett, self.funname, args)
+        return ('%s %s(%s) {\n') % (self.get_self_return_type(toplevel), self.funname, args)
 
     # returns correct function call string
     # if the region is toplevel, we do not need to return a structure from the extracted function, 
@@ -254,14 +310,11 @@ class Function:
         for var in self.inputs: args = args + var.name + ', '
         args = args.rstrip(', ') 
 
-        if toplevel:
-            if self.funrettype == 'void':
-                return ('\t%s(%s);\n') % (self.funname, args)
-            return ('\treturn %s(%s);\n') % (self.funname, args)
-        retn = self.retvalname % (self.funname)
-        rett = self.retvaltype % (self.funname)
-        return ('%s %s = %s(%s);\n') % (rett, retn, self.funname, args)
-
+        rett = self.get_self_return_type(toplevel)
+        retn = self.get_self_retval_name()
+        if toplevel and rett == 'void': return '\t%s(%s);\n' % (self.funname, args)
+        if toplevel and rett != 'void': return '\treturn %s(%s);\n' % (self.funname, args)
+        return '%s %s = %s(%s);\n' % (rett, retn, self.funname, args)
 
     # Defines a structure that is returned from extracted function.
     # If region is toplevel, we do not need such structure - return value directly.
@@ -270,18 +323,9 @@ class Function:
         if toplevel: return ''
 
         args = '' 
-        for var in self.inputs:  
-            if var.isconstq: continue
-            args = args + '\t' + var.as_argument() + ';\n' 
-
-        for var in self.outputs: 
-            args = args + '\t' + var.as_argument() + ';\n' 
-
-        for cond in self.special_out:
-            args = args + '\t' + cond.cond.as_argument() + ';\n'
-            if (cond.stmt == 'return' and cond.var != None): 
-                args = args + '\t' + cond.var.as_argument() + ';\n'
-
+        for var in self.inputs:  args = args + var.as_struct_member() 
+        for var in self.outputs: args = args + var.as_struct_member()
+        for var in self.special: args = args + var.as_struct_member()
         type = self.retvaltype % (self.funname)
         return '%s {\n%s};\n\n' % (type, args)
 
@@ -294,10 +338,8 @@ class Function:
         name = self.retvalname % (self.funname)
         type = self.retvaltype % (self.funname)
         out  = '\t%s %s;\n' % (type, name)
-        
-        for cond in self.special_out:
-            out = out + ('\t%s.%s = 0;\n' % (name, cond.cond.name)) 
-        return out + '\n'
+        for var in self.special: out = out + var.initialize(self.get_self_retval_name())
+        return out 
 
 
     # Stores all local variable in return structure before exiting extracted function.
@@ -308,13 +350,10 @@ class Function:
         if toplevel: return ''
 
         args = ''
-        rett = self.retvalname % (self.funname)
-        for var in self.inputs:  
-            if var.isconstq: continue
-            args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
-        for var in self.outputs: 
-            args = args + ('%s.%s = %s;\n' % (rett, var.name, var.name)) 
-        return '%sreturn %s;\n' % (args, rett)
+        retn = self.get_self_retval_name()
+        for var in self.inputs:  args = args + var.store(retn)
+        for var in self.outputs: args = args + var.store(retn)
+        return '%sreturn %s;\n' % (args, retn)
 
     # Restores local variables in the caller from the structure returned by
     # extracted function, definining it if necessary. 
@@ -324,25 +363,11 @@ class Function:
         if toplevel: return ''
 
         args = ''
-        rett = self.retvalname % (self.funname)
-        for var in self.inputs:  
-            if var.isconstq: continue
-            args = args + ('%s = %s.%s;\n' % (var.name, rett, var.name))
-        for var in self.outputs: 
-            static = ''
-            if var.isstatic: static = 'static '
-            args = args + ('%s%s = %s.%s;\n' % (static, var.as_argument(), rett, var.name))
-
-        # generate if statements if applicable
-        # for return statements, we can also have return statement without any return values, we have 
-        # to treat that case differently below!
-        out = ''
-        for cond in self.special_out:
-            if cond.stmt == 'return' and cond.var == None: var = ''
-            if cond.stmt == 'return' and cond.var != None: var = '%s.%s' % (rett, cond.var.name)
-            out = out + 'if (%s.%s) { %s %s; }\n' % (rett, cond.cond.name, cond.stmt, var)
-        return args + out;
-
+        retn = self.get_self_retval_name()
+        for var in self.inputs:  args = args + var.restore(retn)
+        for var in self.outputs: args = args + var.declare_and_initialize(retn)
+        for var in self.special: args = args + var.make_conditional_stmt(retn)
+        return args 
         
 # returns the string if it exists in the string. Also returns everything on the right-hand side of such 
 # string. Useful for goto/return statements. Performs certain assertion checks to ensure the code extracted
@@ -356,8 +381,8 @@ def line_contains(line, string):
         lhstemp = strip_char_string_literals(lhs)
         rhstemp = strip_char_string_literals(rhs)
         assert(rhstemp.find('}') == -1 and lhstemp.find('{') == -1)
-        assert(not line[idx + len(string)].isalnum())
-        assert(idx == 0 or not line[idx-1].isalnum())
+        if (line[idx + len(string)].isalnum()): return (None, None)
+        if not (idx == 0 or not line[idx-1].isalnum()): return (None, None)
         assert(rhstemp.find(';') == -1) # must not have anything after return statement
         assert(lhstemp == string) # must have some statement on the same line before the keyword. bail.
         return (string, rhs) 
