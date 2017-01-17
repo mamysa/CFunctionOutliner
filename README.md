@@ -70,10 +70,13 @@ If program crashed with `Could not find closing brace exception`, manually tweak
 # Frequently Asked Questions
 
 **Q: Why some of my structs/unions are of type struct/union void?**
+
 **A:**   See `tests/bad_cases/main.c:test1`. Function-local types are not supported at this time.
 
 **Q: I get 'could not find closing brace' exception. What do I do?**
+
 **A:** Verify both region's and function's starting/ending line numbers are sensible. LLVM debug metadata is not precise enough, especially when trying to find boundaries of functions and regions. 
 
 **Q: Why does my extracted program segfault?**
+
 **A:** See `tests/bad_cases/main.c:test3` function for one possible culprit. In short, pointer arithmetic on local stack allocated objects is currently unsupported and source code has to be modified manually.
