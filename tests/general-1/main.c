@@ -138,3 +138,13 @@ int test11() {
 //--REGION END
 	return out;
 }
+
+int aglobal = 12;
+int bglobal = 14;
+int cglobal = 15;
+int test12(void) {
+	static const int *x = &aglobal;
+	if (*x == 14) { x = &cglobal; }
+	else { x = &bglobal; }
+	return *x;
+}
