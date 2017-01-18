@@ -30,7 +30,6 @@ int test1s1(void) {
 	return out;
 }
 
-
 int test1s2(void) {
 	struct mystruct i = {1, 2};
 	struct mystruct j = {4, 6};

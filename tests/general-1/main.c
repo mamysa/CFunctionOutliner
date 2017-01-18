@@ -148,3 +148,31 @@ int test12(void) {
 	else { x = &bglobal; }
 	return *x;
 }
+
+
+int myfunc1(int x) { return x + 2; }
+// testing function call inside region
+int test13() {
+	int a = 12;
+	int out = 0;
+	int i;
+	for (i = 0; i < 12; i++) {
+		out += myfunc1(a);
+	}
+
+	return out;
+}
+
+
+
+struct mystruct myfunc2(int x) { return (struct mystruct){ x + 2, x + 3 }; }
+int test14() {
+//---region start
+	int c = 45;
+	struct mystruct x =  myfunc2(c);
+	if (x.x + x.y == c) { x.x += 1; }
+	else { x.y -= 1; }
+//---region end
+	x.x = x.y * 2;
+	return x.x;
+}

@@ -34,6 +34,9 @@ TESTCASES = {
                     'test8_forcond_forend.xml'  , 'EXPECTED',
                     'test9_forcond_forend.xml'  , '', 
                     'test10_entry_swepilog.xml' , '', 
+                    'test12_entry_ifend.xml'    , '',
+                    'test13_forcond_forend.xml' , '',
+                    'test14_entry_ifend.xml'    , '',
                     'test11_forend_swepilog.xml', '', ],
 
     'general-2/': [ 'test1_forcond_forend.xml'  , '',
@@ -84,6 +87,7 @@ TESTCASES = {
                                  'test5_forcond_forend.xml', '', ],
 
     'bad-cases/': [ 'test1_forcond_forend.xml', 'EXPECTED',
+                    'test3_forend_ifend.xml'  , '',
                     'test2_forcond_forend.xml', 'EXPECTED', ]
 }
 

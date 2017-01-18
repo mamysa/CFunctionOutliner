@@ -10,3 +10,5 @@ test9: for.cond => for.end
 test10: entry => sw.epilog 
 test11: for.end => sw.epilog 
 test12: entry => if.end
+test13: for.cond => for.end 
+test14: entry => if.end

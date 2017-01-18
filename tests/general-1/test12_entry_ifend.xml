@@ -1,0 +1,7 @@
+<extractinfo>
+	<variable>
+		<name>x</name>
+		<type>int const *</type>	
+		<isstatic>1</isstatic>
+	</variable>
+</extractinfo>

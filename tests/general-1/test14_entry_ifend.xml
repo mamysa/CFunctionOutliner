@@ -1,0 +1,6 @@
+<extractinfo>
+	<variable>
+		<name>x</name>
+		<type>struct mystruct</type>	
+	</variable>
+</extractinfo>

@@ -1,0 +1,16 @@
+<extractinfo>
+	<variable>
+		<name>a</name>
+		<type>int</type>
+	</variable>
+	<variable>
+		<name>b</name>
+		<type>int</type>
+	</variable>
+	<variable>
+		<name>x</name>
+		<type>int *</type>
+		<isoutput>1</isoutput>
+	</variable>
+
+</extractinfo>

@@ -1,0 +1,14 @@
+<extractinfo>
+	<variable>
+		<name>a</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+</extractinfo>
