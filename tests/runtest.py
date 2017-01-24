@@ -98,6 +98,7 @@ class VariableInfo:
         self.isfunptr = False
         self.isstatic = False
         self.isconstq = False
+        self.isarrayt = False
 
     def compare_with_error(self, other):
         if self.name != other.name: return 'Name mismatch: %s %s' % (self.name, other.name)
@@ -105,6 +106,7 @@ class VariableInfo:
         if self.isfunptr != other.isfunptr: return 'isfunptr mismatch: %s %s' % (self.isfunptr, other.isfunptr)
         if self.isstatic != other.isstatic: return 'isstatic mismatch: %s %s' % (self.isstatic, other.isstatic)
         if self.isconstq != other.isconstq: return 'isconstq mismatch: %s %s' % (self.isconstq, other.isconstq)
+        if self.isarrayt != other.isarrayt: return 'isarrayt mismatch: %s %s' % (self.isarrayt, other.isarrayt)
         return '' 
 
 ## reads variable info from XML. expects to have both name and type. 
@@ -119,6 +121,7 @@ def xmlgetvariableinfo(filepath):
             if child.find('isfunptr') != None: var.isfunptr = bool(int(child.find('isfunptr').text))
             if child.find('isstatic') != None: var.isstatic = bool(int(child.find('isstatic').text))
             if child.find('isconstq') != None: var.isconstq = bool(int(child.find('isconstq').text))
+            if child.find('isarrayt') != None: var.isarrayt = bool(int(child.find('isarrayt').text))
             out.append(var)
     return out 
 

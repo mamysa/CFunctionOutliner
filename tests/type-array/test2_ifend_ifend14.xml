@@ -2,10 +2,12 @@
 	<variable>
 		<name>a</name>
 		<type>int const *</type>	
+		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>b</name>
 		<type>int const *</type>	
+		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>out</name>

@@ -2,14 +2,17 @@
 	<variable>
 		<name>a</name>
 		<type>struct mystruct const * const *</type>	
+		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>b</name>
 		<type>struct mystruct const * const *</type>	
+		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>c</name>
 		<type>struct mystruct const * const *</type>	
+		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>out</name>
