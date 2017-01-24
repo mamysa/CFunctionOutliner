@@ -66,17 +66,30 @@ TLDR: cannot open and close the block on the same line!
 
 If program crashed with `Could not find closing brace exception`, manually tweaking function's starting and ending linenumbers will help. Refer to `<function>` property in the `xml` file.
 
+# Limitations / General Considerations
+ 
+At this moment this utility is fairly limited in what it can do. 
 
-# Frequently Asked Questions
+## Accessing local variables.
 
-**Q: Why some of my structs/unions are of type struct/union void?**
+Since variables are passed into extracted region by value, you have to be extremely careful when using address-of operator and doing pointer arithmetic on local variables. Consider testcase `tests/bad_cases/main.c:test3`. Once region is extracted and variables `a` and `b` are passed into the function, they now have completely different addresses. Futhermore, once extracted function returns, `return *x` in caller now points to invalid address. 
 
-**A:**   See `tests/bad_cases/main.c:test1`. Function-local types are not supported at this time.
+For obvious reasons such error won't generate compiler error. You have to fix such things manually. 
 
-**Q: I get 'could not find closing brace' exception. What do I do?**
+## Function-Local typedefs, structs, unions
+Function-local types are unsupported at the moment.  Refer to `tests/bad_cases/main.c:test1`. You have to fix it manually by declaring the type in global scope.
 
-**A:** Verify both region's and function's starting/ending line numbers are sensible. LLVM debug metadata is not precise enough, especially when trying to find boundaries of functions and regions. 
+## Incorrect Type Detection
+There might be some cases when C types are not being reconstructed properly (since we have to reconstruct them from debug metadata). In this case, you should use `typedef`. 
 
-**Q: Why does my extracted program segfault?**
+## For Loops
+If your region happens to start with `for` loop, its initializer is actually initialized outside the region. This problem can be fixed easily:
 
-**A:** See `tests/bad_cases/main.c:test3` function for one possible culprit. In short, pointer arithmetic on local stack allocated objects is currently unsupported and source code has to be modified manually.
+```
+// this could be a problem
+for (int i = mystruct.a; i < 10; i++)
+
+// this won't be a problem
+int i = mystruct.a;
+for (;i < 10; i++)
+```
