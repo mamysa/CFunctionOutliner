@@ -34,7 +34,15 @@ static cl::opt<std::string> OutDirectory("out",
 namespace {
 	typedef std::pair<unsigned,unsigned> AreaLoc;
 	typedef std::pair<Value *, Value *>  ValuePair;
-	struct VariableInfo { std::string name; std::string type; bool isfunptr; bool isconstq; bool isstatic; };
+
+	struct VariableInfo { 
+		std::string name; 
+		std::string type; 
+		bool isfunptr; 
+		bool isconstq; 
+		bool isstatic; 
+		bool isarrayt;
+	};
 
 	// XML writer helper.
 	static std::string XMLOpeningTag(const char *, int);
@@ -457,7 +465,7 @@ namespace {
 			// we are interested in array type. 
 			if (auto a = dyn_cast<DICompositeType>(md)) {
 				auto t = a->getTag();
-				if (t == dwarf::DW_TAG_array_type) { tags.push_back(dwarf::DW_TAG_pointer_type); }
+				if (t == dwarf::DW_TAG_array_type)       { tags.push_back(t); }
 				if (t == dwarf::DW_TAG_structure_type)   { tags.push_back(t); break; }
 				if (t == dwarf::DW_TAG_union_type)       { tags.push_back(t); break; }
 				if (t == dwarf::DW_TAG_enumeration_type) { tags.push_back(t); break; }
@@ -482,7 +490,7 @@ namespace {
 		DIType *type = cast<DIType>(md);
 		std::reverse(tags.begin(), tags.end());  
 
-		VariableInfo ret = {"", "", false, false, false};
+		VariableInfo ret = {"", "", false, false, false, false};
 		std::string typestr;
 
 		// function pointers have to be handled a tad differently.
@@ -536,6 +544,7 @@ namespace {
 
 		for (unsigned& t: tags) {
 			switch (t) {
+				case dwarf::DW_TAG_array_type:       { typestr += "* "              ; break; }
 				case dwarf::DW_TAG_pointer_type:     { typestr += "* "              ; break; }
 				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
 				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr; break; }
@@ -545,9 +554,9 @@ namespace {
 			}
 		}
 
-		// if we have const in the end, the variable cannot be modified. Extractor needs to know this
-		// in order not to restore such variables.
+		// const qualified variables and arrays do not have to be restored.
 		if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
+		if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_array_type) { ret.isarrayt = true; }
 		ret.type = typestr;
 		return ret; 
 	}
@@ -588,6 +597,7 @@ namespace {
 		if (info.isfunptr) { out << XMLElement("isfunptr", true, 2); }
 		if (info.isconstq) { out << XMLElement("isconstq", true, 2); }
 		if (info.isstatic) { out << XMLElement("isstatic", true, 2); }
+		if (info.isarrayt) { out << XMLElement("isarrayt", true, 2); }
 		out << XMLClosingTag("variable", 1);
 	}
 

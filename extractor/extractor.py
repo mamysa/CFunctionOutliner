@@ -153,6 +153,7 @@ class Variable:
         self.isoutput = False
         self.isstatic = False
         self.isconstq = False
+        self.isarrayt = False
 
     def __repr__(self):
         return '<Variable name:%s type:%s isoutput:%s>' % (self.name, self.type, self.isoutput)
@@ -165,6 +166,7 @@ class Variable:
     # Should not allow input constants to be in the struct.
     def as_struct_member(self):
         if not self.isoutput and self.isconstq: return ''
+        if not self.isoutput and self.isarrayt: return ''
         ntype = list(filter(lambda x: x != 'const', self.type.split(' ')))
         ntype = ' '.join(ntype).rstrip(' ')
         if self.isfunptr: return '\t%s;\n' % ntype
@@ -177,12 +179,16 @@ class Variable:
         if self.isfunptr: return '%s = %s.%s;\n' % (self.type, struct, self.name)
         return '%s %s = %s.%s;\n' % (self.type, self.name, struct, self.name)
 
+    # const qualified inputs / array inputs should not be restored. Consts for obvious reasons and array
+    # decays to pointer type.
     def restore(self, struct):
         if self.isconstq: return '' 
+        if self.isarrayt: return ''
         return '%s = %s.%s;\n' % (self.name, struct, self.name)
 
     def store(self, struct):
         if not self.isoutput and self.isconstq: return ''
+        if not self.isoutput and self.isarrayt: return ''
         return '%s.%s = %s;\n' % (struct, self.name, self.name)
 
     # read xml into variable type.
@@ -194,6 +200,7 @@ class Variable:
         isfunptr = xml.find('isfunptr')
         isstatic = xml.find('isstatic')
         isconstq = xml.find('isconstq')
+        isarrayt = xml.find('isarrayt')
         
         #name, ptrl and type are required
         if name == None or type == None:
@@ -204,6 +211,7 @@ class Variable:
         if isfunptr != None: variable.isfunptr = bool(isfunptr.text)
         if isstatic != None: variable.isstatic = bool(isstatic.text)
         if isconstq != None: variable.isconstq = bool(isconstq.text)
+        if isarrayt != None: variable.isarrayt = bool(isarrayt.text)
         return variable
 
 # if condition class for possible return / goto statements inside the region that we have to check 

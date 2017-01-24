@@ -17,6 +17,9 @@ TESTFILES = [
     'static-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'goto-1/', 'main.c', 'region.txt', 'main_entry_myreturnlabel.xml',
     'const-fn-pointer-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
+    'array-1/', 'main.c', 'region.txt', 'main_forcond_forend.xml',
+    'array-2/', 'main.c', 'region.txt', 'main_forcond_forend.xml',
+    'array-3/', 'main.c', 'region.txt', 'main_ifend_ifend9.xml',
 ]
 
 TEMPFILES = ['.temp/', 'temp.ll', 'extracted.c', 'extracted.out', 'original.out']
