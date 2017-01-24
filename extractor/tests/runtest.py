@@ -7,17 +7,16 @@ import xml.etree.cElementTree as ET
 # with expected XML
 OPT   = 'opt -load ../../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
 CLANG = 'clang -emit-llvm -S -O0 -g %s -o %s'
-EXTRACTOR = 'python ../extractor.py %s %s > %s'
+EXTRACTOR = 'python ../extractor.py --src %s --xml %s --append > %s'
 CLANGCOMPILE = 'clang -O0 %s -o %s'
 
 TESTFILES = [
-    #'./', 'program2.c', 'region.txt', 'program2.ll',
-    #'./', 'program1.c', 'region.txt', 'program1.ll'
     'toplevel/', 'main.c', 'region.txt', 'main_entry_fnend.xml',
     'early-return-1/', 'main.c', 'region.txt', 'main_entry_return.xml',
     'const-qualifier-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'static-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'goto-1/', 'main.c', 'region.txt', 'main_entry_myreturnlabel.xml',
+    'const-fn-pointer-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
 ]
 
 TEMPFILES = ['.temp/', 'temp.ll', 'extracted.c', 'extracted.out', 'original.out']
@@ -54,7 +53,7 @@ def runpass():
         subprocess.call(optcmd, shell=True)
 
         # run code extractor! 
-        extractcmd = EXTRACTOR % (xmloutput, source, extractsrc)
+        extractcmd = EXTRACTOR % (source, xmloutput, extractsrc)
         subprocess.call(extractcmd, shell=True)
 
         # compile both
