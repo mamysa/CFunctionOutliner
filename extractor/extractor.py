@@ -1,6 +1,10 @@
 import sys
 import re
+import argparse
 import xml.etree.cElementTree as ET
+
+# global command line arguments
+CLIARGS = None
 
 # Class containing lines of code that we will be operating on, as well as all data output by llvm.
 class FileInfo:
@@ -152,6 +156,7 @@ class Variable:
         if not self.isoutput and self.isconstq: return ''
         ntype = list(filter(lambda x: x != 'const', self.type.split(' ')))
         ntype = ' '.join(ntype).rstrip(' ')
+        if self.isfunptr: return '\t%s;\n' % ntype
         return '\t%s %s;\n' % (ntype, self.name)
 
     # Declares a variable and initializes it from struct. Static variables have to be initialized to some constant first.
@@ -407,7 +412,7 @@ def strip_char_string_literals(line):
 #Boring parsing stuff
 # Read XML file.
 def parse_xml(fileinfo):
-    tree = ET.parse(sys.argv[1]);
+    tree = ET.parse(CLI_ARGS.xml);
     for child in tree.getroot():
         if (child.tag == 'funcname'):   fileinfo.funname = child.text
         if (child.tag == 'funcreturntype'): fileinfo.funrettype = child.text
@@ -419,7 +424,7 @@ def parse_xml(fileinfo):
 
 # Read original source file into two different dictionaries.
 def parse_src(fileinfo):
-    f = open(sys.argv[2])
+    f = open(CLI_ARGS.src)
     line = f.readline()
     linenum = 1
     while line != '':
@@ -431,9 +436,6 @@ def parse_src(fileinfo):
     f.close()
 
 def main():
-    if len(sys.argv) != 3:
-        sys.stdout.write("Expected two arguments, actual: " + str(len((sys.argv))-1) + "\n")
-        sys.exit(1)
     fileinfo = FileInfo()
     parse_xml(fileinfo)
     parse_src(fileinfo)
@@ -444,4 +446,9 @@ def main():
     fileinfo.extract()
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--src', help='Source code to extract region from',required=True)
+    parser.add_argument('--xml', help='XML file with region info', required=True)
+    parser.add_argument('--append', action='store_true', help='Append the rest of file to the output')
+    CLI_ARGS = parser.parse_args()
     main()
