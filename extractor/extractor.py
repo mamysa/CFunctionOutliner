@@ -396,11 +396,13 @@ def line_contains(line, string):
         rhs = line[(idx+len(string)):].strip(' \n;')
         lhstemp = strip_char_string_literals(lhs)
         rhstemp = strip_char_string_literals(rhs)
-        assert(rhstemp.find('}') == -1 and lhstemp.find('{') == -1)
+        # ensure there are no letters around the word. 
         if (line[idx + len(string)].isalnum()): return (None, None)
         if not (idx == 0 or not line[idx-1].isalnum()): return (None, None)
+
+        assert(rhstemp.find('}') == -1 and lhstemp.find('{') == -1)
         assert(rhstemp.find(';') == -1) # must not have anything after return statement
-        assert(lhstemp == string) # must have some statement on the same line before the keyword. bail.
+        assert(lhstemp == string) # must not have anything before the word. 
         return (string, rhs) 
     return (None, None)
 

@@ -510,13 +510,13 @@ namespace {
 			// is function pointer constant or/and actually a pointer?
 			for (unsigned& t: tags) {
 				switch (t) {
-					case dwarf::DW_TAG_pointer_type: { typestr += "*";      break; }
+					case dwarf::DW_TAG_pointer_type: { typestr += "* ";     break; }
 					case dwarf::DW_TAG_const_type:   { typestr += "const "; break; }
 				}
 			}
 
 			if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
-			ret.type = lhs + '(' + typestr + variablename.str() + ')' + rhs;
+			ret.type = lhs + "( " + typestr + variablename.str() + " )" + rhs;
 			ret.isfunptr = true;
 			return ret; 
 		}
@@ -536,7 +536,7 @@ namespace {
 
 		for (unsigned& t: tags) {
 			switch (t) {
-				case dwarf::DW_TAG_pointer_type:     { typestr += "*"               ; break; }
+				case dwarf::DW_TAG_pointer_type:     { typestr += "* "              ; break; }
 				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
 				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr; break; }
 				case dwarf::DW_TAG_enumeration_type: { typestr = "enum "   + typestr; break; }
