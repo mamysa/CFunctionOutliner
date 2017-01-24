@@ -13,6 +13,8 @@ class FileInfo:
         self.reginfo = None   # starting ending linenumbers of a regioon
         self.funloc = {} 
         self.regloc = {}      # actual lines for both region and a function
+        self.prefunc  = []    # lines before the function
+        self.postfunc = []    # lines after  the function 
         self.exitlocs = []    # line numbers corresponding to exiting edges of the region.
         self.vars = []        # variable list
         self.funrettype = ""  # return type of the function
@@ -49,8 +51,8 @@ class FileInfo:
             for i in range(self.reginfo.end + 1, self.funinfo.end + 1): 
                 temp = self.funloc[i].lstrip(' \t')
                 temp = temp.rstrip(' \n')
-                if len(temp) == 0: continue # empty line, skip
-                
+                if len(temp) == 0: continue 
+
                 #found an empty line with brace, use this.
                 if temp == '}':
                     self.regloc[i] = self.funloc[i]
@@ -59,9 +61,7 @@ class FileInfo:
                     numclosingbraces = numclosingbraces + 1
                     break
 
-                # doing something else here than crashing causes assertion in line_contains to fail.
-                # FIXME low priority. In cases I have tested the program with this condition doesn't even
-                # happen. 
+                # If this happens, manually edit XML file and set the correct ending line
                 if len(temp) != 0: 
                     raise Exception('Could not find closing brace!')
 
@@ -70,7 +70,10 @@ class FileInfo:
         self.reginfo.openingbracenum = numopeningbraces 
 
     # if function is missing closing braces, add the number necessary.
+    # if we are appending the rest of the src to the extracted region, we do not need to do this. 
     def function_add_closing_brace(self):
+        if CLI_ARGS.append: return 
+
         (numopeningbraces, numclosingbraces) = brace_count(self.funloc)
         while numclosingbraces < numopeningbraces:
             self.funinfo.end = self.funinfo.end + 1
@@ -84,6 +87,10 @@ class FileInfo:
 
         for loc in sorted(self.exitlocs):
             function.check_exit_loc(self.regloc, loc)
+
+        # prepend stuff if flag is set
+        for loc in self.prefunc:  
+            sys.stdout.write(loc)
 
         sys.stdout.write(function.declare_return_type(self.toplevel))
         sys.stdout.write(function.get_fn_definition(self.toplevel))
@@ -105,6 +112,10 @@ class FileInfo:
         sys.stdout.write(function.restore_retvals(self.toplevel)) ## if function is not void, restore all variables
         for i in range(self.reginfo.end + 1, self.funinfo.end + 1):
             sys.stdout.write(self.funloc[i])
+
+        # append the rest of the source if we have to
+        for loc in self.postfunc: 
+            sys.stdout.write(loc)
 
 
 class LocInfo:
@@ -428,6 +439,10 @@ def parse_src(fileinfo):
     line = f.readline()
     linenum = 1
     while line != '':
+        if CLI_ARGS.append == True and linenum < fileinfo.funinfo.start: 
+            fileinfo.prefunc.append(line)
+        if CLI_ARGS.append == True and linenum > fileinfo.funinfo.end:
+            fileinfo.postfunc.append(line)
         if fileinfo.funinfo.between(linenum):
             if fileinfo.reginfo.between(linenum): fileinfo.regloc[linenum] = line
             else: fileinfo.funloc[linenum] = line
