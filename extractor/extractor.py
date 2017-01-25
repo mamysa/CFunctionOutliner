@@ -81,6 +81,7 @@ class FileInfo:
             self.funloc[self.funinfo.end] = '}\n'
 
     def extract(self):
+        sys.stdout.write('#include <string.h>\n')
         function = Function(self.funname, self.funrettype)
         for var in self.vars:
             function.add_variable(var)
@@ -149,6 +150,7 @@ class Variable:
     def __init__(self, name, type):
         self.name = name
         self.type = type
+        self.typehasname = False 
         self.isfunptr = False
         self.isoutput = False
         self.isstatic = False
@@ -159,7 +161,7 @@ class Variable:
         return '<Variable name:%s type:%s isoutput:%s>' % (self.name, self.type, self.isoutput)
 
     def as_function_argument(self):
-        if self.isfunptr: return self.type
+        if self.typehasname: return self.type
         return ('%s %s') % (self.type, self.name)
 
     # have to get rid of const qualifiers
@@ -170,14 +172,18 @@ class Variable:
         ntype = list(filter(lambda x: x != 'const', self.type.split(' ')))
         ntype = ' '.join(ntype).rstrip(' ')
         if self.isfunptr: return '\t%s;\n' % ntype
+        if self.isarrayt: return '\t%s;\n' % ntype
         return '\t%s %s;\n' % (ntype, self.name)
 
     # Declares a variable and initializes it from struct. Static variables have to be initialized to some constant first.
     def declare_and_initialize(self, struct):
         assert(self.isoutput)
-        if self.isstatic: return  'static %s %s = 0;\n%s = %s.%s;\n' % (self.type, self.name, self.name, struct, self.name)
-        if self.isfunptr: return '%s = %s.%s;\n' % (self.type, struct, self.name)
-        return '%s %s = %s.%s;\n' % (self.type, self.name, struct, self.name)
+        field = '%s.%s' % (struct, self.name)
+        if self.isstatic: return  'static %s %s = 0;\n%s = %s;\n' % (self.type, self.name, self.name, field)
+        if self.isfunptr: return '%s = %s;\n' % (self.type, field)
+        if self.isarrayt: 
+            return '%s;\n memcpy(%s, %s, sizeof(%s));\n' % (self.type, self.name, field, field)
+        return '%s %s = %s;\n' % (self.type, self.name, field)
 
     # const qualified inputs / array inputs should not be restored. Consts for obvious reasons and array
     # decays to pointer type.
@@ -189,6 +195,8 @@ class Variable:
     def store(self, struct):
         if not self.isoutput and self.isconstq: return ''
         if not self.isoutput and self.isarrayt: return ''
+        if self.isarrayt:
+            return 'memcpy(%s.%s, %s, sizeof(%s));\n' % (struct, self.name, self.name, self.name)
         return '%s.%s = %s;\n' % (struct, self.name, self.name)
 
     # read xml into variable type.
@@ -196,6 +204,7 @@ class Variable:
     def create(xml):
         name = xml.find('name')
         type = xml.find('type')
+        typehasname = xml.find('typehasname')
         isoutput = xml.find('isoutput')
         isfunptr = xml.find('isfunptr')
         isstatic = xml.find('isstatic')
@@ -207,6 +216,7 @@ class Variable:
             raise Exception('Missing variable info');
         
         variable = Variable(name.text, type.text.strip())
+        if typehasname != None: variable.typehasname = bool(typehasname.text)
         if isoutput != None: variable.isoutput = bool(isoutput.text)
         if isfunptr != None: variable.isfunptr = bool(isfunptr.text)
         if isstatic != None: variable.isstatic = bool(isstatic.text)

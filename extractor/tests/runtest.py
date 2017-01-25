@@ -8,7 +8,7 @@ import xml.etree.cElementTree as ET
 OPT   = 'opt -load ../../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
 CLANG = 'clang -emit-llvm -S -O0 -g %s -o %s'
 EXTRACTOR = 'python ../extractor.py --src %s --xml %s --append > %s'
-CLANGCOMPILE = 'clang -O0 %s -o %s'
+CLANGCOMPILE = 'clang -O3 %s -o %s'
 
 TESTFILES = [
     'toplevel/', 'main.c', 'region.txt', 'main_entry_fnend.xml',
@@ -62,8 +62,8 @@ def runpass():
         # compile both
         execextract  = TEMPFILES[0] + TEMPFILES[3]
         execoriginal = TEMPFILES[0] + TEMPFILES[4]
-        extractcompile  = CLANGCOMPILE % (source, execextract) 
-        originalcompile = CLANGCOMPILE % (extractsrc, execoriginal) 
+        extractcompile  = CLANGCOMPILE % (extractsrc, execextract) 
+        originalcompile = CLANGCOMPILE % (source, execoriginal) 
         subprocess.call(extractcompile,  shell=True)
         subprocess.call(originalcompile, shell=True)
 
