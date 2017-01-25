@@ -1,0 +1,19 @@
+<extractinfo>
+	<variable>
+		<name>x</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>y</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>my2darray</name>
+		<type>int(my2darray)[2][3]</type>	
+		<isarrayt>1</isarrayt>
+	</variable>
+</extractinfo>

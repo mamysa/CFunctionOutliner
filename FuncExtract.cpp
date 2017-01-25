@@ -455,6 +455,7 @@ namespace {
 	// slightly differently and in that case we do not have to append variable name.
 	static VariableInfo getTypeString(DIType *T, StringRef variablename) {
 		std::vector<unsigned> tags;
+		std::vector<DINodeArray> ranges; // for array size indexes
 
 		Metadata *md = cast<Metadata>(T);
 		while (true) {
@@ -465,7 +466,7 @@ namespace {
 			// we are interested in array type. 
 			if (auto a = dyn_cast<DICompositeType>(md)) {
 				auto t = a->getTag();
-				if (t == dwarf::DW_TAG_array_type)       { tags.push_back(t); }
+				if (t == dwarf::DW_TAG_array_type)       { tags.push_back(t); ranges.push_back(a->getElements()); }
 				if (t == dwarf::DW_TAG_structure_type)   { tags.push_back(t); break; }
 				if (t == dwarf::DW_TAG_union_type)       { tags.push_back(t); break; }
 				if (t == dwarf::DW_TAG_enumeration_type) { tags.push_back(t); break; }
@@ -488,7 +489,7 @@ namespace {
 		}
 
 		DIType *type = cast<DIType>(md);
-		std::reverse(tags.begin(), tags.end());  
+		//std::reverse(tags.begin(), tags.end());  
 
 		VariableInfo ret = {"", "", false, false, false, false};
 		std::string typestr;
@@ -504,13 +505,13 @@ namespace {
 			// get function's return type
 			Metadata *rettypeinfo = types[0];
 			if (rettypeinfo == nullptr) { lhs += "void "; }  // void function
-			else { lhs += getTypeString(cast<DIType>(rettypeinfo), variablename).type; }
+			else { lhs += getTypeString(cast<DIType>(rettypeinfo), "").type; }
 
 			// get function's arguments' types
 			rhs += '(';
 			if (types.size() == 1) { rhs += "void)"; } // we have 0 input arguments...
 			for (unsigned i = 1; i < types.size(); i++) {
-				rhs += getTypeString(cast<DIType>(types[i]), variablename).type;	
+				rhs += getTypeString(cast<DIType>(types[i]), "").type;	
 				if (i <  types.size() - 1) { rhs += ", ";}
 				if (i == types.size() - 1) { rhs += ")"; }
 			}
@@ -518,47 +519,54 @@ namespace {
 			// is function pointer constant or/and actually a pointer?
 			for (unsigned& t: tags) {
 				switch (t) {
-					case dwarf::DW_TAG_pointer_type: { typestr += "* ";     break; }
-					case dwarf::DW_TAG_const_type:   { typestr += "const "; break; }
+					case dwarf::DW_TAG_pointer_type: { typestr = " * " + typestr;     break; }
+					case dwarf::DW_TAG_const_type:   { typestr = " const " + typestr; break; }
 				}
 			}
 
-			if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
+			if (tags.size() != 0 && tags[0] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
 			ret.type = lhs + "( " + typestr + variablename.str() + " )" + rhs;
 			ret.isfunptr = true;
 			return ret; 
 		}
 
-		// everything else is done below
-		// do not insert space when we are not adding anything else...
-		// also, we are not expecting values to be of type void, so type->getName should not be empty.
-		// TODO we might not need the following condition 
-		//if (tags.size() == 0) { return std::pair<std::string, bool>(type->getName().str(), false);  }
-
-		// void things are just empty, gotta fix that.
-		// also, anonymous structs are also going to show up as 'struct void'. Passing anonymous
-		// structs or pointer to structs is not possible in C so end-user will probably have to fix his code
-		// to prevent such things from happening.
-		if (type->getName().size() == 0) { typestr += "void "; }
-		else { typestr += type->getName().str() + " "; }
+		// depending on the type, we might need to add basetype name before or after 
+		// some types (such as arrays / function pointers) need to have variable name as a part of type definiton
+		bool baseTypeAdded   = false;	
+		bool containsVarName = false;
+		std::string baseType = (type->getName().size() == 0) ? " void " : " " + type->getName().str() + " ";
 
 		for (unsigned& t: tags) {
 			switch (t) {
-				case dwarf::DW_TAG_array_type:       { typestr += "* "              ; break; }
-				case dwarf::DW_TAG_pointer_type:     { typestr += "* "              ; break; }
-				case dwarf::DW_TAG_structure_type:   { typestr = "struct " + typestr; break; }
-				case dwarf::DW_TAG_union_type:       { typestr = "union "  + typestr; break; }
-				case dwarf::DW_TAG_enumeration_type: { typestr = "enum "   + typestr; break; }
-				case dwarf::DW_TAG_typedef:          { 							    ; break; }
-				case dwarf::DW_TAG_const_type:       { typestr += "const "          ; break; }
+				case dwarf::DW_TAG_pointer_type:     { typestr = " * " + typestr; break; }
+				case dwarf::DW_TAG_structure_type:   { typestr = "struct" + baseType + typestr; baseTypeAdded = true; break; }
+				case dwarf::DW_TAG_union_type:       { typestr = "union"  + baseType + typestr; baseTypeAdded = true; break; }
+				case dwarf::DW_TAG_enumeration_type: { typestr = "enum "   + baseType + typestr; baseTypeAdded = true; break; }
+				case dwarf::DW_TAG_typedef:          { typestr = baseType + typestr; baseTypeAdded = true; break; }
+				case dwarf::DW_TAG_const_type:       { typestr = "const " + typestr; break; }
+				case dwarf::DW_TAG_array_type:       { 
+					DINodeArray rangelist = ranges.back(); ranges.pop_back();
+					typestr = " ( " + typestr + " " + variablename.str() + " ) ";
+					containsVarName = true;
+					for (auto elem = rangelist.begin(); elem != rangelist.end(); ++elem) {
+						if (!isa<DISubrange>(*elem)) { continue; }
+						DISubrange *a = cast<DISubrange>(*elem);
+						typestr += " [" + std::to_string(a->getCount()) + "] ";
+					}
+				}
 			}
 		}
 
+		if (!baseTypeAdded) { typestr = baseType + typestr; }
 		// const qualified variables and arrays do not have to be restored.
-		if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
-		if (tags.size() != 0 && tags[tags.size() - 1] == dwarf::DW_TAG_array_type) { ret.isarrayt = true; }
+		if (tags.size() != 0 && tags[0] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
+		if (tags.size() != 0 && tags[0] == dwarf::DW_TAG_array_type) { ret.isarrayt = true; }
 		ret.type = typestr;
 		return ret; 
+	}
+
+	inline static std::string makeTaggedType(std::string type, std::string name, bool& baseTypeAdded) {
+		baseTypeAdded = true; return type + name;
 	}
 
 	// self-explanatory. 
@@ -575,7 +583,7 @@ namespace {
 
 	static VariableInfo getVariableInfo(Value *V) {
 		Metadata *M = getMetadata(V);
-		if (!M) { return {"", "", false, false, false}; }
+		if (!M) { return {"", "", false, false, false, false}; }
 		DIVariable *DI = cast<DIVariable>(M);
 		auto varinfo = getTypeString(cast<DIType>(DI->getRawType()), DI->getName());
 		varinfo.name = DI->getName().str();

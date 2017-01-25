@@ -4,3 +4,6 @@ test1s2: arrayinit.end12 => if.end33
 test2:   if.end => if.end14
 test3:   if.end => if.end14
 test4:   if.end => if.end23
+test5:   for.cond => for.end8
+test6:   for.cond => for.end
+test7:   for.cond => for.end

@@ -104,3 +104,57 @@ int test4(void) {
 
 	return out + c[0];
 }
+
+// 2 dimensional array test
+int test5(void) {
+	int my2darray[2][3] = { 
+		{ 1, 2, 3 },
+		{ 4, 2, 1 },
+	};
+
+	int out = 0;
+	int x, y;
+	for (y = 0; y < 2; y++) 
+	for (x = 0; x < 3; x++) {
+		out = my2darray[y][x];
+	}
+
+	return out;
+}
+
+// array of structs
+int test6(void) {
+
+	struct mystruct array[3] = { 
+		{ 1, 2 }, 
+		{ 4, 2 },
+		{ 0, 0 },
+	};
+
+	int i;
+	for (i = 0; i < 3; i++) {
+		array[i].x *= 2;
+		array[i].y *= 2;
+	}
+	
+	return array[i].x;
+}
+
+// pointer to array of structures.
+int test7(void) {
+	struct mystruct a = { 1, 2 };
+	struct mystruct b = { 4, 2 };
+	struct mystruct array[2] = { a, b };
+	struct mystruct (*arrayptr)[2] = &array;
+
+	int i;
+	for (i = 0; i < 2; i++) {
+		(*arrayptr)[i].x *= 2;
+		(*arrayptr)[i].y *= 2;
+	}
+	
+	return array[i].x;
+}
+
+
+

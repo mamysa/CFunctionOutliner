@@ -10,6 +10,16 @@ void func3(void) {
 	int a = 12;
 }
 
+void func4(int a[2]) {
+	a[0] *= 2;
+	a[1] *= 2;
+}
+
+void func5(int a[2][3], int j) {
+	a[j][0] *= 2;
+	a[j][1] *= 2;
+	a[j][2] *= 2;
+}
 
 
 
@@ -83,4 +93,31 @@ int test5(void) {
 	}
 
 	return out;
+}
+
+// function pointer with array argument...
+int test6(void) {
+	void (*myfunction)(int[2]) = func4;
+	int arr[2] = { 2, 4 };
+	int i;
+	for (i = 0; i < 4; i++) {
+		myfunction(arr);
+	}
+
+	return arr[0];
+}
+
+int test7(void) {
+	void (*myfunction)(int[2][3], int) = func5;
+	int arr[2][3] = { 
+		{ 2, 4, 6 },
+		{ 3, 6, 9 },
+	};
+
+	int i;
+	for (i = 0; i < 2; i++) {
+		myfunction(arr, i);
+	}
+
+	return arr[0][0];
 }

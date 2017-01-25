@@ -1,0 +1,11 @@
+<extractinfo>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>array</name>
+		<type>struct mystruct (array)[3]</type>	
+		<isarrayt>1</isarrayt>
+	</variable>
+</extractinfo>

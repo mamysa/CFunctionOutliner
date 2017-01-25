@@ -153,7 +153,3 @@ int test6(void) {
 //--- REGION  END
 	return out + myglobalstruct.y;
 }
-
-
-
-

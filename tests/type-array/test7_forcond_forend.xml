@@ -1,0 +1,10 @@
+<extractinfo>
+	<variable>
+		<name>i</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>arrayptr</name>
+		<type>struct mystruct (*arrayptr)[2]</type>	
+	</variable>
+</extractinfo>

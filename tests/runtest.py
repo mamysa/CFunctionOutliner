@@ -5,8 +5,8 @@ import xml.etree.cElementTree as ET
 # small test runner. 
 # Since FuncExtract pass outputs XML, we need a separate program to compare actual output XML
 # with expected XML
-#OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
-OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null &> /dev/null'
+OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
+#OPT   = 'opt -load ../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null &> /dev/null'
 CLANG = 'clang -emit-llvm -S -O0 -g %s -o %s'
 tempfiles = ['.temp/', 'out.ll'] 
 
@@ -72,18 +72,24 @@ TESTCASES = {
                              'test6_forcond_forend.xml', '',
                              'test5_forcond_forend.xml', '', ],
 
-    'type-array/': [ 'test1_ifend_ifend13.xml'           , '',
-                     'test1s1_ifend_ifend13.xml'         , '',
-                     'test1s2_arrayinitend12_ifend33.xml', '',
-                     'test2_ifend_ifend14.xml'           , '',
-                     'test3_ifend_ifend14.xml'           , '',
-                     'test4_ifend_ifend23.xml'           , '', ],
+    'type-array/': [ #'test1_ifend_ifend13.xml'           , '',
+                     'test5_forcond_forend8.xml'         , '',
+                     'test6_forcond_forend.xml'          , '',
+                     'test7_forcond_forend.xml'          , '',
+                     #'test1s1_ifend_ifend13.xml'         , '',
+                     #'test1s2_arrayinitend12_ifend33.xml', '',
+                     #'test2_ifend_ifend14.xml'           , '',
+                     #'test3_ifend_ifend14.xml'           , '',
+                     #'test4_ifend_ifend23.xml'           , '', ],
+                     ],
 
 
     'type-fn-pointers/':       [ 'test1_forcond_forend.xml', '',
                                  'test2_forcond_forend.xml', '',
                                  'test3_forcond_forend.xml', '',
                                  'test4_forcond_forend.xml', '',
+                                 'test6_forcond_forend.xml', '',
+                                 'test7_forcond_forend.xml', '',
                                  'test5_forcond_forend.xml', '', ],
 
     'bad-cases/': [ 'test1_forcond_forend.xml', 'EXPECTED',
