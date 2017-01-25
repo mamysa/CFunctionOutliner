@@ -12,14 +12,14 @@ tempfiles = ['.temp/', 'out.ll']
 
 
 TESTFILES = [
-    'general-1/', 'main.c', 'regions.txt',
-    'general-2/', 'main.c', 'regions.txt',
-    'type-basic-const/', 'main.c', 'regions.txt',
-    'type-struct/',      'main.c', 'regions.txt',
-    'type-pointers/',    'main.c', 'regions.txt',
+    #'general-1/', 'main.c', 'regions.txt',
+    #'general-2/', 'main.c', 'regions.txt',
+    #'type-basic-const/', 'main.c', 'regions.txt',
+    #'type-struct/',      'main.c', 'regions.txt',
+    #'type-pointers/',    'main.c', 'regions.txt',
     'type-array/',       'main.c', 'regions.txt',
-    'type-fn-pointers/', 'main.c', 'regions.txt',
-    'bad-cases/',        'main.c', 'regions.txt',
+    #'type-fn-pointers/', 'main.c', 'regions.txt',
+    #'bad-cases/',        'main.c', 'regions.txt',
 ]
 
 TESTCASES = {
@@ -72,16 +72,15 @@ TESTCASES = {
                              'test6_forcond_forend.xml', '',
                              'test5_forcond_forend.xml', '', ],
 
-    'type-array/': [ #'test1_ifend_ifend13.xml'           , '',
+    'type-array/': [ 'test1_ifend_ifend13.xml'           , '',
                      'test5_forcond_forend8.xml'         , '',
                      'test6_forcond_forend.xml'          , '',
                      'test7_forcond_forend.xml'          , '',
-                     #'test1s1_ifend_ifend13.xml'         , '',
-                     #'test1s2_arrayinitend12_ifend33.xml', '',
-                     #'test2_ifend_ifend14.xml'           , '',
-                     #'test3_ifend_ifend14.xml'           , '',
-                     #'test4_ifend_ifend23.xml'           , '', ],
-                     ],
+                     'test1s1_ifend_ifend13.xml'         , '',
+                     'test1s2_arrayinitend12_ifend33.xml', '',
+                     'test2_ifend_ifend14.xml'           , '',
+                     'test3_ifend_ifend14.xml'           , '',
+                     'test4_ifend_ifend23.xml'           , '', ],
 
 
     'type-fn-pointers/':       [ 'test1_forcond_forend.xml', '',

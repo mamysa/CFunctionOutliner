@@ -1,17 +1,17 @@
 <extractinfo>
 	<variable>
 		<name>a</name>
-		<type>int *</type>	
+		<type>int (a)[2]</type>	
 		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>b</name>
-		<type>int *</type>	
+		<type>int (b)[2]</type>	
 		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>
 		<name>c</name>
-		<type>int *</type>	
+		<type>int (c)[2]</type>	
 		<isarrayt>1</isarrayt>
 	</variable>
 	<variable>

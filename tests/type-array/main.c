@@ -155,6 +155,3 @@ int test7(void) {
 	
 	return array[i].x;
 }
-
-
-
