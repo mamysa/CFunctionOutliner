@@ -38,6 +38,7 @@ namespace {
 	struct VariableInfo { 
 		std::string name; 
 		std::string type; 
+		bool typehasname;  // sometimes we need to include variable name into the type definition.
 		bool isfunptr; 
 		bool isconstq; 
 		bool isstatic; 
@@ -491,7 +492,7 @@ namespace {
 		DIType *type = cast<DIType>(md);
 		//std::reverse(tags.begin(), tags.end());  
 
-		VariableInfo ret = {"", "", false, false, false, false};
+		VariableInfo ret = {"", "", false, false, false, false, false};
 		std::string typestr;
 
 		// function pointers have to be handled a tad differently.
@@ -527,13 +528,12 @@ namespace {
 			if (tags.size() != 0 && tags[0] == dwarf::DW_TAG_const_type) { ret.isconstq = true; }
 			ret.type = lhs + "( " + typestr + variablename.str() + " )" + rhs;
 			ret.isfunptr = true;
+			ret.typehasname = true;
 			return ret; 
 		}
 
 		// depending on the type, we might need to add basetype name before or after 
-		// some types (such as arrays / function pointers) need to have variable name as a part of type definiton
 		bool baseTypeAdded   = false;	
-		bool containsVarName = false;
 		std::string baseType = (type->getName().size() == 0) ? " void " : " " + type->getName().str() + " ";
 
 		for (unsigned& t: tags) {
@@ -541,17 +541,17 @@ namespace {
 				case dwarf::DW_TAG_pointer_type:     { typestr = " * " + typestr; break; }
 				case dwarf::DW_TAG_structure_type:   { typestr = "struct" + baseType + typestr; baseTypeAdded = true; break; }
 				case dwarf::DW_TAG_union_type:       { typestr = "union"  + baseType + typestr; baseTypeAdded = true; break; }
-				case dwarf::DW_TAG_enumeration_type: { typestr = "enum "   + baseType + typestr; baseTypeAdded = true; break; }
+				case dwarf::DW_TAG_enumeration_type: { typestr = "enum "  + baseType + typestr; baseTypeAdded = true; break; }
 				case dwarf::DW_TAG_typedef:          { typestr = baseType + typestr; baseTypeAdded = true; break; }
 				case dwarf::DW_TAG_const_type:       { typestr = "const " + typestr; break; }
 				case dwarf::DW_TAG_array_type:       { 
+					ret.typehasname = true;
 					DINodeArray rangelist = ranges.back(); ranges.pop_back();
 					typestr = " ( " + typestr + " " + variablename.str() + " ) ";
-					containsVarName = true;
 					for (auto elem = rangelist.begin(); elem != rangelist.end(); ++elem) {
-						if (!isa<DISubrange>(*elem)) { continue; }
-						DISubrange *a = cast<DISubrange>(*elem);
-						typestr += " [" + std::to_string(a->getCount()) + "] ";
+						if (auto a = cast<DISubrange>(*elem)) {
+							typestr += " [" + std::to_string(a->getCount()) + "] ";
+						}
 					}
 				}
 			}
@@ -601,7 +601,8 @@ namespace {
 		out << XMLOpeningTag("variable", 1);
 		out << XMLElement("name", info.name, 2);
 		out << XMLElement("type", info.type, 2);
-		if (isOutputVar)   { out << XMLElement("isoutput", true, 2); }
+		if (isOutputVar)      { out << XMLElement("isoutput", true, 2);    }
+		if (info.typehasname) { out << XMLElement("typehasname", true, 2); }
 		if (info.isfunptr) { out << XMLElement("isfunptr", true, 2); }
 		if (info.isconstq) { out << XMLElement("isconstq", true, 2); }
 		if (info.isstatic) { out << XMLElement("isstatic", true, 2); }

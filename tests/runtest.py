@@ -12,14 +12,14 @@ tempfiles = ['.temp/', 'out.ll']
 
 
 TESTFILES = [
-    #'general-1/', 'main.c', 'regions.txt',
-    #'general-2/', 'main.c', 'regions.txt',
-    #'type-basic-const/', 'main.c', 'regions.txt',
-    #'type-struct/',      'main.c', 'regions.txt',
-    #'type-pointers/',    'main.c', 'regions.txt',
+    'general-1/', 'main.c', 'regions.txt',
+    'general-2/', 'main.c', 'regions.txt',
+    'type-basic-const/', 'main.c', 'regions.txt',
+    'type-struct/',      'main.c', 'regions.txt',
+    'type-pointers/',    'main.c', 'regions.txt',
     'type-array/',       'main.c', 'regions.txt',
-    #'type-fn-pointers/', 'main.c', 'regions.txt',
-    #'bad-cases/',        'main.c', 'regions.txt',
+    'type-fn-pointers/', 'main.c', 'regions.txt',
+    'bad-cases/',        'main.c', 'regions.txt',
 ]
 
 TESTCASES = {
