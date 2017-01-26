@@ -8,7 +8,7 @@ import xml.etree.cElementTree as ET
 OPT   = 'opt -load ../../../../../../build/lib/FuncExtract.so -funcextract --bblist=%s --out=%s %s -o /dev/null'
 CLANG = 'clang -emit-llvm -S -O0 -g %s -o %s'
 EXTRACTOR = 'python ../extractor.py --src %s --xml %s --append > %s'
-CLANGCOMPILE = 'clang -O3 %s -o %s'
+CLANGCOMPILE = 'clang -O0 %s -o %s'
 
 TESTFILES = [
     'toplevel/', 'main.c', 'region.txt', 'main_entry_fnend.xml',
@@ -20,6 +20,9 @@ TESTFILES = [
     'array-1/', 'main.c', 'region.txt', 'main_forcond_forend.xml',
     'array-2/', 'main.c', 'region.txt', 'main_forcond_forend.xml',
     'array-3/', 'main.c', 'region.txt', 'main_ifend_ifend9.xml',
+    'array-4/', 'main.c', 'region.txt', 'main_ifend_ifend13.xml',
+    'multiline-args/', 'main.c', 'region.txt', 'myfunction_forcond_forend.xml',
+    'lit-brace-1/', 'main.c', 'region.txt', 'main_forcond_forend.xml',
 ]
 
 TEMPFILES = ['.temp/', 'temp.ll', 'extracted.c', 'extracted.out', 'original.out']

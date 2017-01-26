@@ -181,8 +181,7 @@ class Variable:
         field = '%s.%s' % (struct, self.name)
         if self.isstatic: return  'static %s %s = 0;\n%s = %s;\n' % (self.type, self.name, self.name, field)
         if self.isfunptr: return '%s = %s;\n' % (self.type, field)
-        if self.isarrayt: 
-            return '%s;\n memcpy(%s, %s, sizeof(%s));\n' % (self.type, self.name, field, field)
+        if self.isarrayt: return '%s;\n memcpy(%s, %s, sizeof(%s));\n' % (self.type, self.name, field, field)
         return '%s %s = %s;\n' % (self.type, self.name, field)
 
     # const qualified inputs / array inputs should not be restored. Consts for obvious reasons and array

@@ -5,6 +5,7 @@ int main() {
 	else { a += 2; }
 
 	int x[4] = {1, 2, 3, 4};
+	int const y[4] = { 12, 14, 1, 2 };
 	if (a == 12) {
 		x[3] = x[3] * 2;
 	}
@@ -12,5 +13,5 @@ int main() {
 		x[3] = x[2] * 2;
 	}
 	
-	return x[3];
+	return x[3] + y[0];
 }
