@@ -7,6 +7,45 @@ TODO - description.
 * In `Transforms` directory, append `add_subdirectory(FuncExtract)` to `CMakeLists.txt` file.
 * Follow [LLVM building guide](http://llvm.org/docs/GettingStarted.html).
 
+## Running LLVM Pass
+To extract the region, we have to run supplied LLVM pass first. For that, we need to create a text file listing all functions and regions we wish to extract. Once such file is required for each source file you are extracting from.
+
+In the example below, `main` is the name of the function and `for.cond => for.end` is the region.
+
+```
+echo "main: for.cond => for.end" >> mysourcefile_regions.txt
+```
+
+Next, we have to compile the file that we want to extract from. Note that LLVM pass requires zero optimization (`-O0`) and debug information (`-g`) flags to be present! The command below creates `mysourcefile.ll` file.
+
+```
+clang -emit-llvm -O0 -g -S mysourcefile.c
+```
+
+Now we are ready to run the LLVM pass. LLVM pass takes a number of arguments:
+* `--bblist` - text file listing regions we have created above.
+* `--out` - directory to which output of the pass will be written. Useful for when we are extracting multiple regions from a single file.
+
+We can run the pass as follows:
+```
+opt -load $ROOTDIR/build/lib/FuncExtract.so -funcextract --bblist=regions.txt --out=outdir/ mysourcefile.ll 
+```
+
+After running the pass a number of XML files can be found in the output directory, one file for each region.
+
+##Running Extractor Script
+Code extractor (`extractor/extractor.py`) also takes a number of arguments:
+
+* `--src` - source code we are extracting from (i.e. `mysourcefile.c`).
+* `--xml` - XML file that LLVM pass outputs.
+* `--append` - includes the rest of the `mysourcefile.c` along with extracted function.
+
+We can run script as follows:
+
+```
+python extractor.py --src mysourcefile.c  --xml myfunc_forcond_forend.xml  --append > extracted.c
+```
+
 # Limitations / General Considerations
  
 At this moment this utility is fairly limited in what it can do. 
@@ -18,7 +57,7 @@ Since variables are passed into extracted region by value, you have to be extrem
 For obvious reasons such error won't generate compiler error. You have to fix such things manually. 
 
 ## Array-to-Pointer Decay
-Due to array decay, passing array into the function is the same as passing pointer into the function. Thus, if `sizeof` operator will produce different results when used arrays. 
+Due to array decay, passing array into the function is the same as passing pointer into the function. Thus, if `sizeof` operator will produce different results when used on arrays. 
 
 ## Function-Local typedefs, structs, unions
 Function-local types are unsupported at the moment.  Refer to `tests/bad_cases/main.c:test1`. You have to fix it manually by declaring the type in global scope.
