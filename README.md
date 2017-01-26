@@ -1,5 +1,55 @@
-# FuncExtractor
-TODO - description.
+# CFuncExtract
+
+CFuncExtract is a set of utilities facilitating extraction of single-entry single-exit regions into separate functions and modification of original source code replacing extracted region with suitable function call. 
+
+For example, given the following program:
+
+```c
+int main() {
+	int a[4] = { 1, 2, 3, 4 };
+	int out = 0;
+	
+	int i;
+	for (i = 0; i < 4; i++) { out += a[i]; }
+
+	return out;
+}
+```
+
+... and given information about regions that we want to extract:
+
+```
+for.cond => for.end
+```
+
+... the following will be the result: 
+
+```c
+struct extracted_rettype { 
+	int i;
+	int out;
+}
+
+struct extracted_rettype extracted(int i, int out, int (a)[4]) {
+	struct extracted_rettype retval;
+	for (i = 0; i < 4; i++) { out += a[i]; }
+
+	retval.i = i;
+	retval.out = out;
+	return retval;
+}
+
+int main() {
+	int a[4] = { 1, 2, 3, 4 };
+	int out = 0;
+	
+	int i;
+	struct extracted_rettype retval = extracted(i, out, a);
+	i = retval.i;
+	out = retval.out;
+	return out;
+}
+```
 
 # Getting Started
 ## Building
