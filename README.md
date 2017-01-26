@@ -150,6 +150,18 @@ for (;i < 10; i++)
 
 This approach is not precise since if there are multiple variables initialized to the same literal value, they will all be detected as input or output where applicable.
 
+## Extractor Formatting / Troubleshooting
+Code extractor requires code to be formatted in a certain way to perform extraction correctly. If there are any `return` or `goto` statements inside the region, they have to be on their own line. Otherwise, assertion will fail.
 
-## Code Extractor Formatting
-TODO
+One must be careful when declaring functions. Declaring function return type on its own line can cause problems (LLVM debug metadata is not that precise) and therefore it is recommended to have both function return type and function name on the same line. You can also manually modify function's starting line number to avoid reformatting code.
+
+```c
+// this is bad
+int *
+my_function(int a) { ...
+
+// this is good
+int * my_function(int a) { ...
+```
+
+If the script throws an exception, you have to manually modify region's / function's bounds to fix the problem.
