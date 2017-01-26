@@ -80,3 +80,13 @@ int test3(void) {
 	for (; out < 1200;) { out += x.a; }
 	return out;
 }
+
+
+int test4(void) {
+	const myunion_t m = { 12 };
+	const myunion_t * const myunion = &m;
+
+	int out = 0;
+	for (; out < 1200;) { out += myunion->a; }
+	return out;
+}

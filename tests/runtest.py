@@ -43,6 +43,7 @@ TESTCASES = {
                     'test1s1_forcond_forend.xml', '',
                     'test2_forcond_forend.xml'  , '',
                     'test3_forcond_forend.xml'  , '',
+                    'test4_forcond_forend.xml'  , '',
                     'test2s1_forcond_forend.xml', '', ],
 
     'type-struct/': [ 'test1_ifend_ifend13.xml'  , '',
