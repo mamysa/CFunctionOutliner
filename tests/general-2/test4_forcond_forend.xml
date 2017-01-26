@@ -1,0 +1,11 @@
+<extractinfo>
+	<variable>
+		<name>out</name>
+		<type>int</type>	
+	</variable>
+	<variable>
+		<name>myunion</name>
+		<type>myunion_t const * const</type>	
+		<isconstq>1</isconstq>
+	</variable>
+</extractinfo>
