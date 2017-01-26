@@ -46,6 +46,24 @@ We can run script as follows:
 python extractor.py --src mysourcefile.c  --xml myfunc_forcond_forend.xml  --append > extracted.c
 ```
 
+# Structure of LLVM Pass Output
+LLVM pass outputs XML file with a number of properties.
+
+* `region` indicates at which line region starts and at which it ends. `function` does the same but for functions.
+* `regionexit` contains line numbers where control flow goes outside the region. We need this to determine if there are `return` or `goto` statements inside the region.
+* `funcreturntype` is a return type of the function. 
+* `funcname` is the name of the extracted functions. Defaults to the label of the region.
+* `toplevel` is a boolean indicating if the region is top level (i.e. it spans the entire function). 
+* `variable` contains information about inputs / outputs of the region.
+	* `name` - name of the variable.
+	* `type` - C type of the variable.
+	* `typehasname` - boolean indicating if the name of the variable is already included into type. This is required for arrays and function pointers.
+	* `isoutput` - `1` if variable is declared inside the region and used outside the region, `0` otherwise.
+	* `isfunptr` - `1` if variable is function pointer, `0` otherwise.
+	* `isstatic` - `1` if variable is static, `0` otherwise.
+	* `isconstq` - `1` if variable is `const` qualified, `0` otherwise.
+	* `isarrayt` - `1` if variable is array, `0` otherwise.
+
 # Limitations / General Considerations
  
 At this moment this utility is fairly limited in what it can do. 
