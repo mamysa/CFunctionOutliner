@@ -565,10 +565,6 @@ namespace {
 		return ret; 
 	}
 
-	inline static std::string makeTaggedType(std::string type, std::string name, bool& baseTypeAdded) {
-		baseTypeAdded = true; return type + name;
-	}
-
 	// self-explanatory. 
 	static std::string getFunctionReturnType(const Function *F) {
 		DISubprogram *SP = cast<DISubprogram>(F->getMetadata(0));
