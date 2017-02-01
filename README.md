@@ -144,7 +144,13 @@ for (int i = mystruct.a; i < 10; i++)
 int i = mystruct.a;
 for (;i < 10; i++)
 ```
+## `sizeof` operator
+Values returned by `sizeof` operator are precomputed. This may become a problem if your only usage of the variable inside the region is by `sizeof` - it will not be detected as input.
 
+```c
+long a = sizeof(&b);
+store i64 8, i64* %b, align 8
+```
 ## Const-qualified literals
 `clang` propagates all const-qualified basic literals (i.e. `float`, `int`, etc) and thus there are now instructions that use 'magic' numbers. Any variable that is initialized to a literal is detected as an input to the region if there's an instruction inside the region using the literal with the same value. Same logic applies to outputs.
 
