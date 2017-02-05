@@ -11,6 +11,7 @@ EXTRACTOR = 'python ../extractor.py --src %s --xml %s --append > %s'
 CLANGCOMPILE = 'clang -O0 %s -o %s'
 
 TESTFILES = [
+    'pointer-1/', 'main.c', 'region.txt', 'vec_add_forcond_forend.xml',
     'toplevel-1/', 'main.c', 'region.txt', 'main_entry_fnend.xml',
     'toplevel-2/', 'main.c', 'region.txt', 'myfunc_entry_fnend.xml',
     'early-return-1/', 'main.c', 'region.txt', 'main_entry_return.xml',
