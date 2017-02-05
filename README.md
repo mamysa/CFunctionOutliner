@@ -179,11 +179,11 @@ One must be careful when declaring multiple variables with the same name in the 
 int myfun1(int x) {
 //region start 
 	x = x + 12;
-	if (x == 12) { char x = 254; goto ret; }
+	if (x == 12) { char x = 40; goto ret; }
 	else { char x = 1; goto ret; }
 //region end
 ret:
 	return x + 1;
 }
 ```
-Since `goto` leads to some area outside the region, we have to store `x` into return structure. Thus, it will store `char x` into the structure instead of `int x`. With `myfun1(0)`, original version will return `13`, whereas the extracted version will return `255`.
+Since `goto` leads to some area outside the region, we have to store `x` into return structure. Thus, it will store `char x` into the structure instead of `int x`. With `myfun1(0)`, original version will return `13`, whereas the extracted version will return `41`.
