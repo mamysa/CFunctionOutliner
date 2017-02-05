@@ -326,7 +326,7 @@ class Function:
             stmttype = RegionExit.STMT_GOTO 
             exit = RegionExit(flg, storeinto, storetarget, stmttype)
             self.special.append(exit) 
-            regloc[loc] = '%s%sreturn %s;\n' % (exit.store(rett), self.store_retvals_and_return(False), rett)    
+            regloc[loc] = '%s%s' % (exit.store(rett), self.store_retvals_and_return(False))    
 
     ## returns function definition.
     def get_fn_definition(self, toplevel):
