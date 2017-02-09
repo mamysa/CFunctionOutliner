@@ -17,6 +17,7 @@ TESTFILES = [
     'early-return-1/', 'main.c', 'region.txt', 'main_entry_return.xml',
     'const-qualifier-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'static-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
+    'static-2/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'goto-1/', 'main.c', 'region.txt', 'main_entry_myreturnlabel.xml',
     'const-fn-pointer-1/', 'main.c', 'region.txt', 'main_ifend_ifend7.xml',
     'array-1/', 'main.c', 'region.txt', 'main_forcond_forend.xml',
@@ -47,7 +48,6 @@ def runpass():
         extractsrc = TEMPFILES[0] + TEMPFILES[2]   # file we write output of extractor to.
         xmloutput  = TEMPFILES[0] + TESTFILES[i+3] # location of xml file written by llvm pass.
         
-
         ## gotta confirm those files exist...
         #if not os.path.isfile(source): raise Exception(source   + ' missing, exiting')
         #if not os.path.isfile(region): raise Exception(region   + ' missing, exiting')
