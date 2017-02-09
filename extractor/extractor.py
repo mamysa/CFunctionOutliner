@@ -41,7 +41,6 @@ class FileInfo:
         if self.reginfo.start == self.reginfo.end:
             raise Exception('Empty region!')
 
-
     # Extracted regions sometimes do not include a closing brace so we need to find the line that
     # has it in the rest of the function. Assumes that closing brace is located on its own line.
     # We are only expecting a single brace
@@ -79,6 +78,27 @@ class FileInfo:
             self.funinfo.end = self.funinfo.end + 1
             numclosingbraces = numclosingbraces + 1
             self.funloc[self.funinfo.end] = '}\n'
+
+    # located possible extern declarations inside the function.
+    def region_locate_externs(self):
+        stack = []
+        for i in range(self.funinfo.start, self.reginfo.start):
+            line = strip_char_string_literals(self.funloc[i])
+            braces = filter(lambda x: x == '}' or x == '{', line)
+            for j in braces:
+                if j == '{': stack.append(j);
+                if j == '}':
+                    while stack[-1] != '{' and len(stack) != 0: 
+                        stack.pop();
+                    stack.pop()
+            
+            line = line.lstrip('\t ')
+            line = line.rstrip('\n; ')
+            (lhs, rhs) = line_contains(line, 'extern')
+            if lhs != None: stack.append((lhs, rhs))
+        stack = filter(lambda x: x != '{', stack) 
+        return (list(set(stack)))
+
 
     def extract(self):
         sys.stdout.write('#include <string.h>\n')
