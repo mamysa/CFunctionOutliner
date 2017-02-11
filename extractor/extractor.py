@@ -189,20 +189,25 @@ class Variable:
     def as_struct_member(self):
         if not self.isoutput and self.isconstq: return ''
         if not self.isoutput and self.isarrayt: return ''
-        ntype = list(filter(lambda x: x != 'const', self.type.split(' ')))
+        ntype = list(filter(lambda x: x != 'const', self.as_function_argument().split(' ')))
         ntype = ' '.join(ntype).rstrip(' ')
-        if self.isfunptr: return '\t%s;\n' % ntype
-        if self.isarrayt: return '\t%s;\n' % ntype
-        return '\t%s %s;\n' % (ntype, self.name)
+        return '\t%s;\n' % ntype
 
-    # Declares a variable and initializes it from struct. Static variables have to be initialized to some constant first.
+    # Declares a variable and initializes it from struct. Static variables have to be initialized to some constant first. FIXME 
     def declare_and_initialize(self, struct):
         assert(self.isoutput)
+        declr = self.as_function_argument()
         field = '%s.%s' % (struct, self.name)
-        if self.isstatic: return  'static %s %s = 0;\n%s = %s;\n' % (self.type, self.name, self.name, field)
-        if self.isfunptr: return '%s = %s;\n' % (self.type, field)
-        if self.isarrayt: return '%s;\n memcpy(%s, %s, sizeof(%s));\n' % (self.type, self.name, field, field)
-        return '%s %s = %s;\n' % (self.type, self.name, field)
+        
+        # arrays we have to memcpy. 
+        restore = '' 
+        if self.isarrayt: restore = 'memcpy(%s, %s, sizeof(%s))' % (self.name, field, field)
+        else: restore = '= %s' % field
+
+        if self.isstatic and self.isarrayt: return 'static %s;\n %s;\n' % (declr, restore)
+        if self.isarrayt: return '%s;\n %s;\n' % (declr, restore)
+        if self.isstatic: return 'static %s;\n %s %s;\n' % (declr, self.name, restore)
+        return '%s %s;\n' % (declr, restore)
 
     # const qualified inputs / array inputs should not be restored. Consts for obvious reasons and array
     # decays to pointer type.
