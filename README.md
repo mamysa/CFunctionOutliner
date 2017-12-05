@@ -83,7 +83,7 @@ opt -load $ROOTDIR/build/lib/FuncExtract.so -funcextract --bblist=regions.txt --
 
 After running the pass a number of XML files can be found in the output directory, one file for each region.
 
-##Running Extractor Script
+## Running Extractor Script
 Code extractor (`extractor/extractor.py`) also takes a number of arguments:
 
 * `--src` - source code we are extracting from (i.e. `mysourcefile.c`).
